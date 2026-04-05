@@ -48,6 +48,8 @@ add_executable(Floppy80
     memory.c
     logging.c
     hdc.c
+    frehd.c
+    z80_bus.c
 )
 
 # pull in common dependencies

@@ -8,13 +8,11 @@
 #include "defines.h"
 #include "system.h"
 #include "file.h"
-#include "fdc.h"
-#include "hdc.h"
+#include "sd_core.h"
+#include "hardware/watchdog.h"
+#include "pico/bootrom.h"
 
 void ServiceFdcLog(void);
-
-extern FdcDriveType g_dtDives[MAX_DRIVES];
-extern TrackType    g_tdTrack;
 
 static uint64_t g_nCdcPrevTime;
 static uint32_t g_nCdcConnectDuration;
@@ -24,24 +22,20 @@ static bool     g_bCdcPromptSent;
 static char     g_szCommandLine[64];
 static int      g_nCommandLineIndex;
 
-static DIR     dj;				// Directory object
-static FILINFO fno;				// File information
+#define BUF_SIZE 1024
+byte g_bFdcResponse[BUF_SIZE];
 
-static bool    g_bOutputLog = false;
+// version
+static char*   g_pszVersion = {(char*)VERSION_STRING};
 
 static char szHelpText[] = {
                         "\n"
                         "help       - returns this message\n"
+                        "reboot     - Reboot normally\n"
+                        "flash      - Reboot into BOOTSEL mode\n"
                         "status     - returns the current FDC status\n"
                         "dir filter - returns a directory listing of the root folder of the SD-Card\n"
                         "             optionally include a filter.  For example dir .ini\n"
-                        "boot file  - selects an ini file to be specified in the boot.cfg\n"
-                        "logon      - enable output of FDC interface logging output\n"
-                        "logoff     - disable output of FDC interface logging output\n"
-                        "disks      - returns the stats to the mounted diskettes\n"
-                        "dump drive - returns sectors of each track on the indicate drive (0 - 2)\n"
-                        "hdc        - creates a new vitual hard disk. Usage:\n"
-                        "             hdc file.ext heads cylinders sectors\n"
                     };
 
 void InitCli(void)
@@ -49,15 +43,95 @@ void InitCli(void)
     g_bCdcPromptSent = false;
     g_bCdcConnected  = false;
     g_nCdcPrevTime   = time_us_64();
+
+	memset(&g_bFdcResponse, 0, sizeof(g_bFdcResponse));
+}
+
+void hex_dump(const void *data, size_t size) {
+    const unsigned char *bytes = (const unsigned char *)data;
+
+	printf("\n");
+
+    for (size_t i = 0; i < size; i += 16) {
+        // Print offset
+        printf("%08zx  ", i);
+
+        // Print hex bytes
+        for (size_t j = 0; j < 16; j++) {
+            if (i + j < size)
+                printf("%02X ", bytes[i + j]);
+            else
+                printf("   ");
+        }
+
+        printf(" ");
+
+        // Print ASCII representation
+        for (size_t j = 0; j < 16 && i + j < size; j++) {
+            unsigned char c = bytes[i + j];
+            printf("%c", isprint(c) ? c : '.');
+        }
+
+        printf("\n");
+    }
+}
+
+//-----------------------------------------------------------------------------
+void FdcProcessStatusRequest(byte print)
+{
+	char szBuf[64];
+	char szLineEnd[4];
+	int  i;
+
+	if (print) {
+		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r\n");
+	} else {
+		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r");
+	}
+
+	strcpy_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, (char*)"Pico FDC Version ");
+	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, g_pszVersion);
+	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
+	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
+
+	sprintf(szBuf, "Enable FBC Boot  = %d", g_byEnableFDCBoot);
+	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+	sprintf(szBuf, "Enable FreHD Boot= %d", g_byEnableFreHDBoot);
+	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Enable High RAM  = %d", g_byEnableUpperMem);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "EnableWaitStates = %d", g_byEnableWaitStates);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Card Inserted = %d", get_cd() );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Card Mounted  = %d", sd_byCardInialized );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+
+    puts((char*)g_bFdcResponse);
 }
 
 void ListFiles(char* pszFilter)
 {
-    FRESULT fr;  // Return value
+	DIR     dj;			// Directory object
+	FILINFO fno;		// File information
+	FILINFO_API api_fno;
+    FRESULT fr;  		// Return value
     int nCol = 0;
 
     memset(&dj, 0, sizeof(dj));
     memset(&fno, 0, sizeof(fno));
+
     fr = f_findfirst(&dj, &fno, "0:", "*");
 
 	while ((fr == FR_OK) && (fno.fname[0] != 0))
@@ -68,11 +142,15 @@ void ListFiles(char* pszFilter)
 		}
 		else
 		{
+//			copyFILEINFO(&api_fno,&fno);
+//			hex_dump(&api_fno, sizeof(api_fno));
+//			printf("\n");
+
 			if ((pszFilter[0] == 0) || (stristr(fno.fname, pszFilter) != NULL))
 			{
                 ++nCol;
 
-    			if (nCol < 5)
+    			if (nCol < DIR_COLUMNS)
 				{
                     printf("%30s %9d", fno.fname, fno.fsize);
                 }
@@ -89,155 +167,6 @@ void ListFiles(char* pszFilter)
 			fr = f_findnext(&dj, &fno); /* Search for next item */
 		}
 	}
-}
-
-void ProcessDisksRequest(void)
-{
-    int i;
-    char* pszDensity[] = {"SD", "DD"};
-
-    for (i = 0; i < MAX_DRIVES; ++i)
-    {
-        printf("File name  : %s\r\n", g_dtDives[i].szFileName);
-        printf("Density    : %s\r\n", pszDensity[g_dtDives[i].dmk.byDensity]);
-        printf("Num sides  : %d\r\n", g_dtDives[i].dmk.byNumSides);
-        printf("Track size : %d\r\n", g_dtDives[i].dmk.wTrackLength);
-        printf("Sector size: %d\r\n", g_dtDives[i].dmk.nSectorSize);
-    }
-}
-
-void DumpSector(int nDrive, int nTrack, int nSector)
-{
-    int nOffset = g_tdTrack.nSectorIndexMarkOffset[nSector];
-
-    if (nOffset < 0)
-    {
-        return;
-    }
-
-    BYTE* pby = g_tdTrack.byTrackData + nOffset - 3;
-    int   i = 1;
-    int   state = 0;
-    int   size = 512;
-    int   nDataSize = 1;
-
-    while (i <= size)
-    {
-        printf("%02X ", *pby);
-
-        switch (state)
-        {
-            case 0:
-                if (*pby == 0xFE)
-                {
-                    if (*(pby+1) == 0xFE)
-                    {
-                        nDataSize = 2;
-                    }
-
-                    printf("%02X %02X %02X %02X %02X %02X\r\n"
-                           "DRV: %02X TRK: %02X S: %02X SEC: %02X LEN: %02X CRC: %02X%02X",
-                           *(pby+1*nDataSize), *(pby+2*nDataSize), *(pby+3*nDataSize),
-                           *(pby+4*nDataSize), *(pby+5*nDataSize), *(pby+6*nDataSize),
-                           nDrive, *(pby+1*nDataSize), *(pby+2*nDataSize), *(pby+3*nDataSize),
-                           *(pby+4*nDataSize), *(pby+5*nDataSize), *(pby+6*nDataSize));
-                    size = 128 << *(pby+4*nDataSize);
-                    i = 0;
-                    pby += 7*nDataSize;
-                    ++state;
-                }
-
-                break;
-
-            case 1:
-                if ((*pby == 0xFB) || (*pby == 0xF8))
-                {
-                    printf("\r\nSector data");
-                    i = 0;
-                    ++state;
-                }
-
-                break;
-
-            case 2:
-                break;
-        }
-
-        if ((i % 16) == 0)
-        {
-            printf("\r\n");
-            while (tud_cdc_write_available() < 56);
-        }
-
-        pby += nDataSize;
-        ++i;
-    }
-
-    printf("CRC: %02X %02X\r\n\r\n", *pby, *(pby+1*nDataSize));
-    sleep_ms(5);
-}
-
-void ProcessDumpRequest(int nDrive)
-{
-    if (nDrive == 4)
-    {
-        HdcDumpDisk(nDrive-4);
-        return;
-    }
-
-    if ((nDrive < 0) || (nDrive >= MAX_DRIVES))
-    {
-        puts("Invalid drive index specified.");
-        return;
-    }
-
-    int nTracks = g_dtDives[nDrive].dmk.byDmkDiskHeader[1];
-    int i, j, k;
-    int nSides = 2;
-
-    if (g_dtDives[nDrive].dmk.byDmkDiskHeader[4] & 0x10)
-    {
-        nSides = 1;
-    }
-
-    for (i = 0; i < nTracks; ++i)
-    {
-        for (k = 0; k < nSides; ++k)
-        {
-            FdcReadTrack(nDrive, k, i);
-
-            for (j = 0; j < 64; ++j)
-            {
-                DumpSector(nDrive, i, j);
-            }
-        }
-    }
-}
-
-void CreateHdcFile(char* psz)
-{
-    char szParm1[16] = {""};
-    char szFileName[32];
-    int  nHeads, nCylinders, nSectors;
-
-    psz = GetWord(psz, szFileName, sizeof(szFileName)-2);
-
-    psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
-    nHeads = atoi(szParm1);
-
-    psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
-    nCylinders = atoi(szParm1);
-
-    psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
-    nSectors = atoi(szParm1);
-
-    printf("File name: %s\r\n"
-           "Heads    : %d\r\n"
-           "Cylinders: %d\r\n"
-           "Sectors  : %d\r\n",
-           szFileName, nHeads, nCylinders, nSectors);
-
-    HdcCreateVhd(szFileName, nHeads, nCylinders, nSectors);
 }
 
 void ProcessCommand(char* psz)
@@ -260,48 +189,22 @@ void ProcessCommand(char* psz)
         return;
     }
 
-    if (stricmp(szCmd, "BOOT") == 0)
-    {
-        psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
-		FdcSaveBootCfg(szParm1);
-        FdcProcessStatusRequest(true);
-        return;
-    }
-
     if (stricmp(szCmd, "STATUS") == 0)
     {
         FdcProcessStatusRequest(true);
         return;
     }
 
-    if (stricmp(szCmd, "LOGON") == 0)
+    if (stricmp(szCmd, "REBOOT") == 0)
     {
-        g_bOutputLog = true;
+        watchdog_reboot(0,0,0);
+//		rom_reboot(BOOT_TYPE_NORMAL, 0, 0, 0);
         return;
     }
 
-    if (stricmp(szCmd, "LOGOFF") == 0)
+    if (stricmp(szCmd, "FLASH") == 0)
     {
-        g_bOutputLog = false;
-        return;
-    }
-
-    if (stricmp(szCmd, "DISKS") == 0)
-    {
-        ProcessDisksRequest();
-        return;
-    }
-
-    if (stricmp(szCmd, "DUMP") == 0)
-    {
-        psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
-        ProcessDumpRequest(atoi(szParm1));
-        return;
-    }
-
-    if (stricmp(szCmd, "HDC") == 0)
-    {
-        CreateHdcFile(psz);
+		rom_reset_usb_boot(0,0);
         return;
     }
 
@@ -345,17 +248,6 @@ void ServiceCli(void)
         printf("\nCMD> ");
         g_bCdcPromptSent = true;
     }
-
-#ifdef ENABLE_LOGGING
-    if (g_bOutputLog)
-    {
-        ServiceFdcLog();
-    }
-    else
-    {
-        log_tail = log_head;
-    }
-#endif
 
     c = getchar_timeout_us(0);
 

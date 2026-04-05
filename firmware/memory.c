@@ -2,460 +2,235 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "hardware/gpio.h"
+//#include "hardware/gpio.h"
 #include "hardware/structs/systick.h"
 
 #include "defines.h"
-#include "fdc.h"
-#include "hdc.h"
+#include "z80_bus.h"
+#include "file.h"
+//#include "frehd.h"
 
-#define NopDelay() __nop(); __nop(); __nop(); __nop(); __nop(); __nop();
+// Force 4-byte alignment for faster 32-bit internal bus access
+// and ensure they are placed in SRAM (not Flash).
 
-extern BufferType g_bFdcRequest;
-extern BufferType g_bFdcResponse;
+// ==================================================
+// FDC BOOTBLOCK
 
-static byte by_memory[0x8000];
+// The bootblock served by FDC at initial L2 Startup
+static uint8_t __aligned(4) fdc_bootblock[256];
 
-volatile byte g_byFdcIntrActive;
-volatile byte g_byRtcIntrActive;
-volatile byte g_byResetActive;
-volatile byte g_byEnableIntr;
-volatile byte g_byEnableUpperMem;
-volatile byte g_byEnableWaitStates;
-volatile byte g_byEnableVhd = true;
+// Poiter into BootBlock
+static uint8_t fdc_bootblockIdx = 0;
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(FinishReadOperation)(byte data)
-{
-    clr_gpio(DIR_PIN);      // B to A direction
-    set_bus_as_output();    // make data pins (D0-D7) outputs
-    clr_gpio(DATAB_OE_PIN); // enable data bus transciever
+// ==================================================
+// UPPER 32KB RAM
 
-    // put byte on data bus
-    put_byte_on_bus(data);
+// Upper 32k memory in 0x8000 to 0xFFFF
+static uint8_t __aligned(4) by_highmemory[0x8000];
 
-    clr_gpio(WAIT_PIN);
+// ==================================================
+// PAGED VIRTUAL MEMORY
+
+// the first byte offset 0 in the springboard of each element
+static uint8_t __aligned(4) trampoline_first[256];
+// the three bytes in offset's 1,2,3 of all springboard elements
+static uint8_t __aligned(4) trampoline_code[4] = { 0x00, 0x00, 0x34, 0xC9 };
+
+// Paged RAM (128KB) in region 0x3400 - 0x05FF
+// 256 pages * 512 bytes = 0x20000
+static uint8_t __aligned(4) by_pagedmemory[0x20000];
+
+// Use volatile if currentPage is modified by both
+// the Z80 bus loop and a background USB/UI task.
+static volatile uint8_t currentPage = 0;
+
+// current page stack with 16 levels
+#define STACK_SIZE 16
+#define STACK_MASK (STACK_SIZE - 1)
+static uint8_t page_ring[STACK_SIZE];
+static uint8_t ring_ptr = 4;
+
+// 512 Bytes ram for 0x3600 to 0x37FF
+// Note: addresses 0x3400-0x35FF will effectively "shadow" this RAM
+static uint8_t __aligned(4) by_extramemory[0x200];
+
+void MemInit(void) {
+
+	// set up default of call Jump instructions
+	memset(trampoline_first, 0xCD, sizeof(trampoline_first));
+
+	// and initialise the paged and non-paged memory itself
+	memset(by_pagedmemory, 0x00, sizeof(by_pagedmemory));
+	memset(by_extramemory, 0x00, sizeof(by_extramemory));
+	currentPage = 0;
+
+	// setup the stack
+	memset(page_ring, 0x00, sizeof(page_ring));
+	ring_ptr = 4;
 }
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcResponseOperation)(word addr)
-{
-    byte* pby;
-    byte  data;
+void LoadFDCBootBlock(void) {
 
-    addr -= FDC_RESPONSE_ADDR_START;
+	FIL fsrc;      /* File objects */
+	FRESULT fr;    /* FatFs function common result code */
+	UINT br;       /* File read/write count */
 
-    if (addr < FDC_CMD_SIZE)
-    {
-        pby = &g_bFdcResponse.cmd[addr];
-    }
-    else
-    {
-        pby = &g_bFdcResponse.buf[addr-FDC_CMD_SIZE];
-    }
+	fr = f_open(&fsrc, "/SYS/BOOT.SYS", FA_READ);
+	if ( fr == FR_OK) {
 
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(*pby);
-        return;
-    }
+		/* Read a chunk of data from the source file */
+		fr = f_read(&fsrc, fdc_bootblock, sizeof fdc_bootblock, &br);
 
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for RD or WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        *pby = data;
-    }
+		/* Close open files */
+		f_close(&fsrc);
+	}
 }
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcRequestOperation)(word addr)
-{
-    byte  data;
-    byte* pby;
-
-    addr -= FDC_REQUEST_ADDR_START;
-
-    if (addr < FDC_CMD_SIZE)
-    {
-        pby = &g_bFdcRequest.cmd[addr];
-    }
-    else
-    {
-        pby = &g_bFdcRequest.buf[addr-FDC_CMD_SIZE];
-    }
-
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(*pby);
-        return;
-    }
-
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for RD or WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        *pby = data;
-    }    
-}
-
-//-----------------------------------------------------------------------------
+// Service 32KB high RAM in address range $8000 to $FFFF
 void __not_in_flash_func(ServiceHighMemoryOperation)(word addr)
 {
-    byte data;
-    byte* pby = &by_memory[addr-0x8000];
-    
-    if (!get_gpio(RD_PIN))
-    {
+    byte* pby = &by_highmemory[addr - 0x8000];
+
+    if (!get_gpio(RD_PIN)) { // todo not ideal, should be passed in the request
         FinishReadOperation(*pby);
-        return;
-    }
 
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for RD or WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        *pby = data;
+    } else {
+		*pby = FinishWriteOperation();
     }
 }
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcDriveSelectOperation)(void)
+// Extra Paged Memory in Range 0x3000 - 0x37DF
+void __not_in_flash_func(ServiceExtraMemory)(word addr)
 {
-    byte data;
-    
-    if (!get_gpio(RD_PIN))
-    {
-        data = g_byDriveStatus;
+	volatile byte* pby = NULL;
+	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation // todo not ideal, should be passed in the request
+	addr = (addr - 0x3000) & 0x07FF; // truncate address to range $0000 - $07FF
 
-        if (g_byRtcIntrActive)
-        {
-            data |= 0x80;
-        }
+	if (addr<0x400) { // springboard memory 0x000 - 0x3FF
 
-        FinishReadOperation(data);
+		byte offset = addr & 0x03; // offset in the springboard
+		uint8_t accessPage = (addr >> 2) & 0xFF; // page in springboard
 
-        if (g_byRtcIntrActive)
-        {
-            g_byRtcIntrActive = false;
+		if (offset==0) { // fist offset byte
 
-            if (!g_byFdcIntrActive)
-            {
-                // deactivate intr
-                clr_gpio(INT_PIN);
-            }
-        }
+			if (bIsRead) {
+				// Read of Offset 0 If a CALL, push ht current Page
+				if (trampoline_first[accessPage] == 0xCD) {
+					page_ring[ring_ptr] = currentPage;
+					ring_ptr = (ring_ptr + 1) & STACK_MASK;
+				}
 
-        return;
-    }
+				// Set PAGE code byte to read From
+				pby = &trampoline_first[accessPage];
+			} else {
+				// WRITING/LOADING: Validate the opcode
+				byte val = FinishWriteOperation();
+				// If it's not a Jump, we treat it as a Call (the safer default)
+				trampoline_first[accessPage] = (val == 0xC3) ? 0xC3 : 0xCD;
+			}
 
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
+			// Set the Current page
+			currentPage = accessPage;
+			printf("\r\ncurrentPage(%d)",currentPage);
 
-    // wait for WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
+		} else if (bIsRead) { // READS of offset 123, WRITES ignored
 
-    if (!get_gpio(WR_PIN))
-    {
-        fdc_write_drive_select(data);
-    }
+			if (offset == 3) {
+				// On RET (Offset 3): Move Back and Restore current page
+				ring_ptr = (ring_ptr - 1) & STACK_MASK;
+				currentPage = page_ring[ring_ptr];
+				printf("\r\ncurrentPage(%d)",currentPage);
+			}
+
+			pby = &trampoline_code[offset]; // the offset code byte to return
+		} // else WRITES are ignored Completely
+
+	} else if ( addr>=0x600) { // general purpose 0x600 - 0x7FF(actually 0x7DF)
+		pby = &by_extramemory[addr - 0x600]; //
+
+	} else { // paged memory 0x400 0x5FF
+		pby = &by_pagedmemory[(addr - 0x400) + (currentPage * 0x200)];
+	}
+
+	if (pby) {
+		if (bIsRead) {
+			FinishReadOperation(*pby);
+		} else {
+			*pby = FinishWriteOperation();
+		}
+	}
 }
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcCmdStatusOperation)(void)
+// Service Memory Control Ports in Range 0x37E0 - 0x3FFF
+void __not_in_flash_func(ServiceExtraPorts)(word addr)
 {
-    byte data;
+	static byte byDataAvailable = 0x02; // 1771 FDC Status - data available
+	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation // todo not ideal, should be passed in the request
+	volatile byte* pby = NULL; // byte to write or read.
 
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(fdc_read_status());
+	switch (addr) {
+		case 0x37EC: // FDC Command Status Register
+			if (g_byEnableFDCBoot) {
+				if (bIsRead) {
+					// return an 0x01 constant.
+					pby = &byDataAvailable;
+				} else {
+					// writing CMD -> reset the pointer to boot block
+					printf("\r\nfbcBoot()");
+					fdc_bootblockIdx = 0;
+				}
+			}
+			break;
+		case 0x37EF: // FDC Data Register
+			if (g_byEnableFDCBoot) {
+				if (bIsRead) {
+					printf(".");
+					// read byte from the boot block
+					pby = &fdc_bootblock[fdc_bootblockIdx++];
+				}
+			}
+			break;
+		case 0x37F0: // Virtual MEMORY PAGE Register
+			pby = &currentPage; // Page control register (Read/Write)
+			break;
+		case 0x37F1:
+			// todo This needs to be implemented, the below is not correct.
+			// if (bIsRead) {
+			// 	// POP operation: Restore previous page and return it to Z80
+			// 	ring_ptr = (ring_ptr - 1) & STACK_MASK;
+			// 	currentPage = page_ring[ring_ptr];
+			// } else {
+			// 	// PUSH operation: Save current page and switch to the new one
+			// 	page_ring[ring_ptr] = currentPage;
+			// 	ring_ptr = (ring_ptr + 1) & STACK_MASK;
+			// }
+			// pby = &currentPage; // RW Page control register at $37F0
+			break;
+	}
 
-        if (!g_byRtcIntrActive) // then caused by WD controller, so clear it
-        {
-            clr_gpio(INT_PIN);
-        }
-
-        return;
-    }
-
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        fdc_write_cmd(data);
-    }
+	// if assigned then we need to read write the byte
+	if (pby) {
+		if (bIsRead) {
+			FinishReadOperation(*pby);
+		} else {
+			*pby = FinishWriteOperation();
+		}
+	}
 }
 
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcTrackOperation)(void)
-{
-    byte data;
-    
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(fdc_read_track());
-        return;
-    }
+// $37E1 - Drive Select - IGNORE - is only every written with $01
+// $37EC - Disk Command/Status
+//				* return $01
+//					* return >0 and <$FF for initial detection
+//					* return bit0 = 0 (not busy)
+//					* return bit1 = 1 (data available)
+//				* any write to this should reset pointer
+//					* $03 - is written to issue Seek Track 0
+//					* $8C - is written to issue read command
+// $37ED - Disk Track - IGNORE - never used
+// $37EE - Disk Sector - IGNORE - written once ($0) to select sector
+// $37EF - Disk Data - where data is read from => $4200
+//				* any read should return the boot block data
+// $37F0 - Paged RAM - Page Select
+//				* full read write access to page register
 
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        fdc_write_track(data);
-    }
-}
-
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcSectorOperation)(void)
-{
-    byte data;
-    
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(fdc_read_sector());
-        return;
-    }
-
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        fdc_write_sector(data);
-    }
-}
-
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServiceFdcDataOperation)(void)
-{
-    byte data;
-
-    if (!get_gpio(RD_PIN))
-    {
-        FinishReadOperation(fdc_read_data());
-        return;
-    }
-
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    // wait for WR to go active or MREQ to go inactive
-    while (get_gpio(WR_PIN) && !get_gpio(MREQ_PIN));
-
-    if (!get_gpio(WR_PIN))
-    {
-        fdc_write_data(data);
-    }
-}
-
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServicePortIn)(word addr)
-{
-    byte data;
-
-    if (get_gpio(IN_PIN))
-    {
-        return;
-    }
-
-    addr = addr & 0xFF;
-
-    if ((addr < 0xC0) || (addr > 0xCF) || (g_byEnableVhd == 0))
-    {
-        return;
-    }
-
-    FinishReadOperation(hdc_port_in(addr));
-}
-
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(ServicePortOut)(word addr)
-{
-    byte data;
-
-    if (get_gpio(OUT_PIN))
-    {
-        return;
-    }
-
-    addr = addr & 0xFF;
-
-    if ((addr < 0xC0) || (addr > 0xCF) || (g_byEnableVhd == 0))
-    {
-        return;
-    }
-
-    clr_gpio(DATAB_OE_PIN);
-    NopDelay();
-    data = get_gpio_data_byte();
-    set_gpio(DATAB_OE_PIN);
-
-    hdc_port_out(addr, data);
-}
-
-//-----------------------------------------------------------------------------
-void __not_in_flash_func(service_memory)(void)
-{
-    register word bus;
-    register word addr;
-
-    // systick_hw->csr = 0x5;
-    // systick_hw->rvr = 0x00FFFFFF;
-
-    while (1)
-    {
-        clr_gpio(WAIT_PIN);
-
-        while (!get_gpio(SYSRES_PIN))
-        {
-           	g_byResetActive = true;
-        }
-
-       	g_byResetActive = false;
-
-        // wait for MREQ, IN, RD, WR and OUT to go inactive
-        do {
-            bus = get_gpio_read_bus();
-        } while ((bus & 0x1F) != 0x1F);
-
-        // turn bus around
-        set_gpio(DATAB_OE_PIN); // disable data bus transciever
-        set_bus_as_input();     // reset data pins (D0-D7) inputs
-        set_gpio(DIR_PIN);      // A to B direction
-
-        // read low address byte, address is put on bus before MREQ goes low
-        // so we can read it while waiting for MREQ to go active (low)
-        // saves time after MREQ goes low
-        clr_gpio(ADDRL_OE_PIN);
-        NopDelay();
-
-        // wait for MREQ, IN, RD, WR or OUT to go active, reading low address byte while waiting
-        do {
-            bus = get_gpio_read_bus();
-        } while ((bus & 0x1F) == 0x1F);
-
-        if (g_byEnableWaitStates)
-        {
-            set_gpio(WAIT_PIN);
-        }
-
-        addr = (bus >> (D0_PIN - IN_PIN)) & 0xFF;
-        set_gpio(ADDRL_OE_PIN);
-        clr_gpio(ADDRH_OE_PIN);
-
-#ifdef PICO_RP2040
-        set_gpio(WAIT_PIN);
-#endif
-
-        // start = systick_hw->cvr;
-
-        if (g_byEnableIntr)
-        {
-            g_byEnableIntr = false;
-        	set_gpio(INT_PIN); // activate intr
-        }
-
-        // read high address byte
-        addr = addr + ((get_gpio_data_byte() & 0xFF) << 8);
-        set_gpio(ADDRH_OE_PIN);
-
-        if (!(bus & 0x01))
-        {
-            ServicePortIn(addr);
-        }
-        else if (!(bus & 0x08))
-        {
-            ServicePortOut(addr);
-        }
-        else if (addr >= 0x8000)
-        {
-            if (g_byEnableUpperMem)
-            {
-                ServiceHighMemoryOperation(addr);
-            }
-        }
-        else
-        {
-            switch (addr)
-            {
-                case 0x37E0:
-                case 0x37E1:
-                case 0x37E2:
-                case 0x37E3:
-                    ServiceFdcDriveSelectOperation();
-                    break;
-
-                case 0x37EC:
-                    ServiceFdcCmdStatusOperation();
-                    break;
-
-                case 0x37ED:
-                    ServiceFdcTrackOperation();
-                    break;
-
-                case 0x37EE:
-                    ServiceFdcSectorOperation();
-                    break;
-
-                case 0x37EF:
-                    set_gpio(WAIT_PIN);
-                    ServiceFdcDataOperation();
-                    break;
-
-                default:
-                    if ((addr >= FDC_REQUEST_ADDR_START) && (addr <= FDC_REQUEST_ADDR_STOP))
-                    {
-                        ServiceFdcRequestOperation(addr);
-                    }
-                    else if ((addr >= FDC_RESPONSE_ADDR_START) && (addr <= FDC_RESPONSE_ADDR_STOP))
-                    {
-                        ServiceFdcResponseOperation(addr);
-                    }
-
-                    break;
-            }
-        }
-
-        // end = systick_hw->cvr;
-        // duration = (start & 0x00FFFFFF) - (end & 0x00FFFFFF);
-    }
-}

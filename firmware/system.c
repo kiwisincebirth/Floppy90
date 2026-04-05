@@ -21,7 +21,15 @@
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Note: g_ (among other) prefix is used to denote global variables
+// Configuration Items
+volatile byte g_byEnableUpperMem;
+volatile byte g_byEnableFDCBoot;
+volatile byte g_byEnableFreHDBoot;
+volatile byte g_byEnableWaitStates;
+
+volatile byte g_byRtcIntrActive;
+volatile byte g_byResetActive;
+volatile byte g_byRaiseInterrupt;
 
 volatile uint32_t g_dwLedCount;
 
@@ -47,24 +55,28 @@ void __not_in_flash_func(reset_system)(void)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-void InitVars(void)
+void InitGlobalVars(void)
 {
+	// primary configuration items
+	g_byEnableUpperMem   = false;
+	g_byEnableFDCBoot    = true;
+	g_byEnableFreHDBoot  = false;
+	g_byEnableWaitStates = true;
+
 	g_dwResetTime        = 1000;	// 1ms
+
 	g_nTimeNow           = time_us_64();
 	g_nPrevTime          = g_nTimeNow;
+
 	g_nRtcIntrCount      = 0;
 	g_byMonitorReset     = FALSE;
 	g_dwResetCount       = 0;
-	g_byRtcIntrActive    = false;
-	g_byIntrRequest      = 0;
-	g_byResetActive      = true;
-	g_byEnableIntr       = false;
-	g_byEnableUpperMem   = true;
-	g_byEnableWaitStates = false;
-	g_dwLedCount         = 0;
 
-	memset(&Hdc, 0, sizeof(Hdc));
-	memset(Vhd, 0, sizeof(Vhd));
+	g_byRtcIntrActive    = false;
+	g_byResetActive      = true;
+	g_byRaiseInterrupt   = false;
+
+	g_dwLedCount         = 0;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -100,12 +112,12 @@ char* SkipBlanks(char* psz)
 	{
 		return NULL;
 	}
-	
+
 	while ((*psz == ' ') && (*psz != 0))
 	{
 		++psz;
 	}
-	
+
 	return psz;
 }
 
@@ -116,12 +128,12 @@ char* SkipToBlank(char* psz)
 	{
 		return NULL;
 	}
-	
+
 	while ((*psz != ' ') && (*psz != 0))
 	{
 		++psz;
 	}
-	
+
 	return psz;
 }
 
@@ -149,7 +161,7 @@ char* GetWord(char* psz, char* dest, int max_len)
 char* CopyLabelName(char* pszSrc, char* pszDst, int nMaxLen)
 {
 	int i = 0;
-	
+
 	while ((i < nMaxLen) && (*pszSrc != '=') && (*pszSrc != 0))
 	{
 		*pszDst = toupper(*pszSrc);
@@ -164,7 +176,7 @@ char* CopyLabelName(char* pszSrc, char* pszDst, int nMaxLen)
 	{
 		++pszSrc;
 	}
-	
+
 	return pszSrc;
 }
 
@@ -172,7 +184,7 @@ char* CopyLabelName(char* pszSrc, char* pszDst, int nMaxLen)
 void CopyString(char* pszSrc, char* pszDst, int nMaxLen)
 {
 	int i;
-	
+
 	for (i = 0; i < nMaxLen; ++i)
 	{
 		if (*pszSrc != 0)
@@ -230,8 +242,6 @@ char* stristr(char* psz, char* pszFind)
 	return NULL;
 }
 
-#ifndef MFC
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // returns   0 if psz1 == psz2
 //			    -1 if psz1 < psz2
@@ -274,7 +284,7 @@ void strcat_s(char* pszDst, int nDstSize, char* pszSrc)
 	int nLen = strlen(pszDst);
 
 	pszDst += nLen;
-	
+
 	while ((nLen < nDstSize) && (*pszSrc != 0))
 	{
 		*pszDst = *pszSrc;
@@ -302,8 +312,6 @@ void strcpy_s(char* pszDst, int nDstSize, char* pszSrc)
 	*pszDst = 0;
 }
 
-#endif
-
 ///////////////////////////////////////////////////////////////////////////////
 void UpdateCounters(void)
 {
@@ -319,7 +327,7 @@ void UpdateCounters(void)
 	{
 		g_nRtcIntrCount  -= 25000;
 		g_byRtcIntrActive = true;
-		g_byEnableIntr    = true;
+		g_byRaiseInterrupt = true;
 	}
 
 	if (get_cd())		// 0 => card removed; 1 => card inserted;
@@ -343,7 +351,6 @@ void UpdateCounters(void)
 			g_byMonitorReset = FALSE;
 			FileCloseAll();
 			FileSystemInit();
-			FdcInit();
 			multicore_reset_core1();
 			reset_system();
 		}
@@ -366,19 +373,23 @@ void UpdateCounters(void)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
-void SysProcessConfigEntry(char szLabel[], char* psz)
-{
-	if (strcmp(szLabel, "MEM") == 0)
-	{
+void SysProcessConfigEntry(char szLabel[], char* psz) {
+	/*
+	EnablePicoRAM=1
+	=1
+	EnableFDCBoot=1
+	FDCBOOT=/SYS/BOOT.SYS
+	EnableInterrupts=1
+	*/
+
+	if (strcmp(szLabel, "EnableFDCBoot") == 0) {
+		g_byEnableFDCBoot = atoi(psz);
+	} else if (strcmp(szLabel, "EnableFreHDBoot") == 0) {
+		g_byEnableFreHDBoot = atoi(psz);
+	} else if (strcmp(szLabel, "EnableHighRAM") == 0) {
 		g_byEnableUpperMem = atoi(psz);
-	}
-	else if (strcmp(szLabel, "WAIT") == 0)
-	{
+	} else if (strcmp(szLabel, "EnableWaitStates") == 0) {
 		g_byEnableWaitStates = atoi(psz);
-	}
-	else if (strcmp(szLabel, "VHD") == 0)
-	{
-		g_byEnableVhd = atoi(psz);
 	}
 }
 
@@ -393,20 +404,23 @@ void SysInit(void)
 	int   nLen;
 
 	// read the default ini file to load on init
-	f = FileOpen("system.cfg", FA_READ);
-	
+	f = FileOpen("/SYS/hardware.cfg", FA_READ);
+	// f = FileOpen("system.cfg", FA_READ);
+
+	// TODO Need to move this file into SYS directory
+
 	if (f == NULL)
 	{
 		return;
 	}
 
 	nLen = FileReadLine(f, (BYTE*)szLine, sizeof(szLine)-2);
-	
+
 	while (nLen >= 0)
 	{
 		psz = SkipBlanks(szLine);
-		
-		if ((*psz != 0) && (*psz != ';')) // blank line or a comment line
+
+		if ((*psz != 0) && (*psz != ';') && (*psz != '#')) // blank line or a comment line
 		{
 			StrToUpper(psz);
 			psz = CopyLabelName(psz, szLabel, sizeof(szLabel)-2);
@@ -415,6 +429,6 @@ void SysInit(void)
 
 		nLen = FileReadLine(f, (BYTE*)szLine, 126);
 	}
-	
-	FileClose(f);	
+
+	FileClose(f);
 }

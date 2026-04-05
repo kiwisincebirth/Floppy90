@@ -1,5 +1,33 @@
 # Floppy 80 for the TRS-80 Model I
 
+## Background
+
+FatFS
+https://elm-chan.org/fsw/ff/
+
+
+Based off
+https://github.com/carlk3/no-OS-FatFS-SD-SPI-RPi-Pico
+
+This repository is more or less frozen. 
+Exceptions will be made for bug fixes and compatibility 
+with new releases of the Pico SDK and FatFS. 
+Any new development will take place in the new repository: 
+no-OS-FatFS-SD-SDIO-SPI-RPi-Pico.
+This repository supports SPI-attached SD cards only. 
+The new repository supports SPI- and/or SDIO-attached SD cards.
+
+which includes
+FatFs module 
+R0.15 (November 6, 2022)
+
+### FreHD
+
+Includes a VERY OLD ff
+FatFs - FAT file system module include file  
+R0.09b    (C)ChaN, 2013
+Jan 24,'13 R0.09b Added f_setlabel() and f_getlabel(). (_USE_LABEL = 1)
+
 ## Features
 
 The Floppy-80 is a Hardware and software solution that emulates 

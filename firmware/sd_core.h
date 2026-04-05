@@ -14,10 +14,8 @@ extern volatile DWORD g_dwSdCardMaxPresenceCount;
 /* function prototypes ==========================================*/
 
 unsigned char get_cd(void);
-unsigned char get_wp(void);
 
 BYTE IsSdCardInserted(void);
-BYTE IsSdCardWriteProtected(void);
 void MountSdCard(void);
 void TestSdCardInsertion(void);
 void SDHC_Init(void);

@@ -7,12 +7,12 @@
 
 #include "defines.h"
 #include "sd_core.h"
-#include "system.h"
+// #include "system.h"
 #include "fdc.h"
 
 #include "ff.h"
-#include "diskio.h"
-#include "f_util.h"
+// #include "diskio.h"
+// #include "f_util.h"
 #include "hw_config.h"
 #include "sd_card.h"
 #include "util.h"
@@ -23,12 +23,12 @@ volatile BYTE  sd_byCardInialized;
 volatile DWORD g_dwSdCardPresenceCount;
 volatile DWORD g_dwSdCardMaxPresenceCount;
 
+// info about volume
 static F_SPACE sd_Size;
+
 static BYTE    sd_byCurrentCdState;
-static BYTE    sd_byCurrentWpState;
 static BYTE    sd_byCardRemoved;
 static BYTE    sd_byPreviousCdState;
-static BYTE    sd_byPreviousWpState;
 static WORD    sd_wCardInitTries;
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -46,44 +46,18 @@ static FATFS *sd_get_fs_by_name(const char *name)
 }
 
 //-----------------------------------------------------------------------------
-// returns: 0 => card removed; 1 => card inserted;
+// returns: 1 => card inserted; 0 => card removed;
 unsigned char get_cd(void)
 {
-	if (gpio_get(CD_PIN) == 0)
-	{
-		return 1;
-	}
-
-	return 0;
-}
-
-//-----------------------------------------------------------------------------
-// returns: 1 => write protected; 0 => not write protected
-unsigned char get_wp(void)
-{
-	return 0;
+	return 1; // TODO Something wrong Here
+	// inverting since the pin is Active LOW
+	// return (gpio_get(CD_PIN) == 0) ? 1 : 0;
 }
 
 //-----------------------------------------------------------------------------
 BYTE IsSdCardInserted(void)
 {
-	if (sd_byCurrentCdState == 0)	// card is not present
-	{
-		return FALSE;
-	}
-	
-	return TRUE;
-}
-
-//-----------------------------------------------------------------------------
-BYTE IsSdCardWriteProtected(void)
-{
-	if (sd_byCurrentWpState == 1)	// card is write protected
-	{
-		return TRUE;
-	}
-	
-	return FALSE;
+	return sd_byCurrentCdState != 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -131,10 +105,7 @@ BYTE sd_getfreespace(void)
 void MountSdCard(void)
 {
 	FRESULT fr;
-	BYTE    nCD;
 	int     nRet;
-
-	nCD = get_cd();
 
 	sd_Size.nSectorsTotal  = 0;
 	sd_Size.nSectorsFree   = 0;
@@ -145,50 +116,28 @@ void MountSdCard(void)
 	sd_Size.nClustersBad   = 0;
 	sd_Size.nClusterSize   = 0;
 
-	if (nCD != 0)
-	{
-		if (sd_wCardInitTries < 5)
-		{
-			++sd_wCardInitTries;
-			sd_byCardInialized = FALSE;
+	if ( get_cd() ) { // if card inserted
 
-			if (!sd_init_driver())
-			{
-				return;
-			}
+		sd_byCardInialized = FALSE;
+
+		if (sd_wCardInitTries < 5) {
+			++sd_wCardInitTries;
+
+			if (!sd_init_driver()) return;
 
 			char*  pszDrive = (char*)"0:";
 			FATFS* pfs = sd_get_fs_by_name(pszDrive);
 
-			if (!pfs)
-			{
-				sd_byCardInialized = FALSE;
-				return;
-			}
+			if (!pfs) return;
 
 			fr = f_mount(pfs, "0:", 1);
 
-			if (fr == FR_OK)
-			{
+			if (fr == FR_OK) {
 				nRet = sd_getfreespace();
-
-				if (nRet == 0)
-				{
+				if (nRet == 0) {
 					sd_byCardInialized = TRUE;
 				}
-				else
-				{
-					sd_byCardInialized = FALSE;
-				}
 			}
-			else
-			{
-				sd_byCardInialized = FALSE;
-			}
-		}
-		else
-		{
-			sd_byCardInialized = FALSE;
 		}
 
 		sd_byCardRemoved = FALSE;
@@ -205,7 +154,6 @@ void MountSdCard(void)
 void TestSdCardInsertion(void)
 {
 	sd_byCurrentCdState = get_cd();		// 0 => card removed; 1 => card inserted;
-	sd_byCurrentWpState = get_wp();		// 0 => not write protected; 1 => write protected;
 
 	if (sd_byCurrentCdState != sd_byPreviousCdState)
 	{
@@ -215,7 +163,7 @@ void TestSdCardInsertion(void)
 			{
 				return;
 			}
-			
+
 			sd_byCardRemoved  = TRUE;
 			sd_wCardInitTries = 0;
 			MountSdCard();
@@ -233,7 +181,6 @@ void TestSdCardInsertion(void)
 	}
 
 	sd_byPreviousCdState = sd_byCurrentCdState;
-	sd_byPreviousWpState = sd_byCurrentWpState;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -242,12 +189,8 @@ void SDHC_Init(void)
 	sd_byCardRemoved           = FALSE;
 	sd_byCardInialized         = FALSE;
 	sd_byCurrentCdState        = get_cd();				// 0 => card removed; 1 => card inserted;
-	sd_byCurrentWpState        = get_wp();				// 1 => write protected; 0 => not write protected
 	sd_byPreviousCdState       = sd_byCurrentCdState;
-	sd_byPreviousWpState       = sd_byCurrentWpState;
 	sd_wCardInitTries          = 0;
 	g_dwSdCardMaxPresenceCount = 10000;
 	g_dwSdCardPresenceCount    = 0;
-	
-	MountSdCard();
 }

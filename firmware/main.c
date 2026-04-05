@@ -14,9 +14,12 @@
 #include "sd_core.h"
 #include "fdc.h"
 #include "hdc.h"
+#include "frehd.h"
 #include "system.h"
 #include "cli.h"
+#include "z80_bus.h"
 #include "memory.h"
+#include "file.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // API documentions is located at
@@ -166,7 +169,7 @@ void InitGPIO(void)
     gpio_init(DIR_PIN);
     gpio_set_dir(DIR_PIN, GPIO_OUT);
     gpio_set_slew_rate(DIR_PIN, GPIO_SLEW_RATE_FAST);
-    gpio_put(DIR_PIN, A_TO_B_DIR); // A to B direction
+    gpio_put(DIR_PIN, 1); // A to B direction
 
     gpio_init(SYSRES_PIN);
     gpio_set_dir(SYSRES_PIN, GPIO_IN);
@@ -181,29 +184,29 @@ int main()
 {
     stdio_init_all();
 
-    InitGPIO();
-    InitVars();
-    SDHC_Init();
-    FileSystemInit();
-    SysInit();
-    FdcInit();
-    HdcInit();
-    InitCli();
+    InitGlobalVars();	// general, RTC / Reset State
+    InitGPIO();			// GPIO Pin Config
+    SDHC_Init();		// Init SD Card Interface
+	MountSdCard();		// Mount the SD Card Filesystem
+	// TestSdCardInsertion();
+    FileSystemInit();	// Init Filesystem Buffers.
+    SysInit();			// Init State - Hardware.CFG File
+	MemInit();			// init Paged Memory State
+	LoadFDCBootBlock(); // Loads BOOT.SYS - FDC boot block
+	FreHDInit();		// currently does nothing
+    InitCli();			// init some variables
 
-    multicore_launch_core1(service_memory);
-
-    // wait for reset to be released
-    while (g_byResetActive)
-    {
-        // tight_loop_contents();
-        ServiceCli();
-    }
+	// service Memory Requests
+    // multicore_launch_core1(service_memory);
+    multicore_launch_core1(ServiceZ80BusRequest);
 
     while (true)
     {
-        UpdateCounters();
-        FdcServiceStateMachine();
-        HdcServiceStateMachine();
         ServiceCli();
+
+    	if ( ! g_byResetActive) {
+    		// When Not In Reset
+        	UpdateCounters();
+    	}
     }
 }

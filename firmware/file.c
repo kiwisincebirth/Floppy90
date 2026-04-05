@@ -6,178 +6,103 @@
 //-----------------------------------------------------------------------------
 
 static file    g_fFiles[MAX_FILES];
-static FRESULT fr;  /* Return value */
+
+// todo not sure why these are static ?
 static DIR     dj;  /* Directory object */
 static FILINFO fno; /* File information */
 
 //-----------------------------------------------------------------------------
 file* FileOpen(char* pszFileName, BYTE byMode)
 {
-	FRESULT fr = FR_NO_FILE;
-	UINT    nMode;
-	int     i;
-
-#ifndef MFC
-	if (sd_byCardInialized == 0)
-	{
+	if (sd_byCardInialized == 0) {
 		return NULL;
 	}
-#endif
 
 	// find the first unused file buffer
-	i = 0;
+	int i = 0;
 
-	while ((i < MAX_FILES) && (g_fFiles[i].byIsOpen))
-	{
+	while ((i < MAX_FILES) && (g_fFiles[i].byIsOpen)) {
 		++i;
 	}
 
-	if (i >= MAX_FILES)
-	{
-		return NULL;
-	}
+	if (i >= MAX_FILES) return NULL;
 
-#ifdef MFC
-	CString str;
-	
-	str   = pszFileName;
-	nMode = 0;
+	g_fFiles[i].result = f_open(&g_fFiles[i].f, pszFileName, byMode);
 
-	if ((byMode & FA_READ) && (byMode & FA_WRITE))
-	{
-		nMode = CFile::modeReadWrite;
-	}
-	else if (byMode & FA_WRITE)
-	{
-		nMode = CFile::modeWrite;
-	}
-	else if (byMode & FA_READ)
-	{
-		nMode = CFile::modeRead;
-	}
-
-	if (g_fFiles[i].f.Open(str, nMode | CFile::typeBinary))
-	{
-		fr = FR_OK;
-	}
-#else
-	fr = f_open(&g_fFiles[i].f, pszFileName, byMode);
-#endif
-
-	if (fr == FR_OK)
-	{
+	if (g_fFiles[i].result == FR_OK) {
 		g_fFiles[i].byIsOpen = TRUE;
-		return &g_fFiles[i];
+		g_fFiles[i].size = f_size(&g_fFiles[i].f);
+	} else {
+		g_fFiles[i].byIsOpen = FALSE;
+		g_fFiles[i].size = 0;
 	}
-	
-	return NULL;
+
+	return &g_fFiles[i];
 }
 
 //-----------------------------------------------------------------------------
 void FileClose(file* fp)
 {
-	if ((fp == NULL) || (fp->byIsOpen == FALSE))
-	{
-		return;
-	}
+	if ((fp == NULL) || (fp->byIsOpen == FALSE)) return;
 
-#ifdef MFC
-	fp->f.Close();
-#else
-	f_close(&fp->f);
-#endif
-
+	fp->result = f_close(&fp->f); // noting the result is ignored
 	fp->byIsOpen = FALSE;
 }
 
 //-----------------------------------------------------------------------------
 BYTE FileIsOpen(file *fp)
 {
-	if (fp == NULL)
-	{
-		return FALSE;
-	}
-
+	if (fp == NULL)	return FALSE;
 	return fp->byIsOpen;
 }
 
 //-----------------------------------------------------------------------------
 uint32_t FileRead(file* fp, BYTE* pby, uint32_t nSize)
 {
+	if ((fp == NULL) || (fp->byIsOpen == 0)) return 0;
+	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
+
 	UINT br;
-
-	if ((fp == NULL) || (fp->byIsOpen == 0))
-	{
-		return 0;
-	}
-
-#ifdef MFC
-	br = fp->f.Read(pby, nSize);
-#else
-	f_read(&fp->f, pby, nSize, &br);
-#endif
-
-	return br;
+	fp->result = f_read(&fp->f, pby, nSize, &br);
+	return br; // return the numer of bytes read.
 }
 
 //-----------------------------------------------------------------------------
 uint32_t FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 {
+	if ((fp == NULL) || (fp->byIsOpen == 0)) return 0;
+	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
+
 	UINT bw;
-
-	if (fp == NULL)
-	{
-		return 0;
-	}
-
-#ifdef MFC
-	fp->f.Write(pby, nSize);
-	bw = nSize;
-#else
-	f_write(&fp->f, pby, nSize, &bw);
-#endif
-
+	fp->result = f_write(&fp->f, pby, nSize, &bw);
 	return bw;
 }
 
 //-----------------------------------------------------------------------------
 void FileSeek(file* fp, int nOffset)
 {
-	if (fp == NULL)
-	{
-		return;
-	}
-
-#ifdef MFC
-	int n = (int)fp->f.Seek(nOffset, CFile::begin);
-#else
-	f_lseek(&fp->f, nOffset);
-#endif
+	if (fp == NULL) return;
+	fp->result = f_lseek(&fp->f, nOffset);
 }
 
 //-----------------------------------------------------------------------------
 void FileFlush(file* fp)
 {
-#ifdef MFC
-	fp->f.Flush();
-#else
-	f_sync(&fp->f);
-#endif
+	if (fp == NULL) return;
+	fp->result = f_sync(&fp->f);
 }
 
 //-----------------------------------------------------------------------------
 void FileTruncate(file* fp)
 {
-	f_truncate(&fp->f);
+	if (fp == NULL) return;
+	fp->result = f_truncate(&fp->f);
 }
 
 //-----------------------------------------------------------------------------
 void FileCloseAll(void)
 {
-	int i;
-
-	for (i = 0; i < MAX_FILES; ++i)
-	{
+	for (int i = 0; i < MAX_FILES; ++i) {
 		FileClose(&g_fFiles[i]);
 	}
 }
@@ -185,10 +110,7 @@ void FileCloseAll(void)
 //-----------------------------------------------------------------------------
 void FileSystemInit(void)
 {
-	int i;
-
-	for (i = 0; i < MAX_FILES; ++i)
-	{
+	for (int i = 0; i < MAX_FILES; ++i) {
 		g_fFiles[i].byIsOpen = false;
 	}
 }
@@ -196,24 +118,8 @@ void FileSystemInit(void)
 //-----------------------------------------------------------------------------
 BYTE IsEOF(file* fp)
 {
-	if (fp == NULL)
-	{
-		return TRUE;
-	}
-
-#ifdef MFC
-	int nSize = (int)fp->f.GetLength();
-	if (fp->f.GetPosition() < nSize)
-	{
-		return FALSE;
-	}
-	else
-	{
-		return TRUE;
-	}
-#else
+	if (fp == NULL) return TRUE;
 	return f_eof(&fp->f);
-#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -221,56 +127,26 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 {
 	char* psz;
 	int   nLen = 0;
-	
-	if ((fp == NULL) || (IsEOF(fp)))
-	{
-		return -1;
-	}
 
-	if (nMaxLen == 0)
-	{
-		return -1;
-	}
+	if ((fp == NULL) || (IsEOF(fp))) return -1;
+	if (nMaxLen == 0) return -1;
 
 	--nMaxLen;
 	szLine[0] = 0;
 
-#ifdef MFC
-	char  ch = 0;
-	int   i = 0;
-	int   nSize = (int)fp->f.GetLength();
-	int   nPos  = (int)fp->f.GetPosition();
-
-	while ((ch != '\r') && (ch != '\n') && (i < nMaxLen) && (nPos < nSize))
-	{
-		fp->f.Read(&ch, 1);
-		++nPos;
-
-		if ((ch != '\r') && (ch != '\n'))
-		{
-			szLine[i] = ch;
-			++i;
-		}
-	}
-
-	szLine[i] = 0;
-#else
 	f_gets(szLine, nMaxLen, &fp->f);						/* Get a string from the file */
-#endif
 
 	// remove CR
 	psz = strchr(szLine, '\r');
 
-	if (psz != NULL)
-	{
+	if (psz != NULL) {
 		*psz = 0;
 	}
 
 	// remove LF
 	psz = strchr(szLine, '\n');
 
-	if (psz != NULL)
-	{
+	if (psz != NULL) {
 		*psz = 0;
 	}
 
@@ -282,38 +158,18 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 ////////////////////////////////////////////////////////////////////////////////////
 BYTE FileExists(char* pszFileName)
 {
-#ifdef MFC
-	CFile f;
-	CString str;
-	
-	str = pszFileName;
-
-	if (!f.Open(str, CFile::modeRead))
-	{
-		return FALSE;
-	}
-
-	f.Close();
-	return TRUE;
-#else
 	memset(&dj, 0, sizeof(dj));
 	memset(&fno, 0, sizeof(fno));
 
-	fr = f_findfirst(&dj, &fno, "0:", "*");
+	FRESULT fr = f_findfirst(&dj, &fno, "0:", "*");
 
-	if (FR_OK != fr)
-	{
-		return FALSE;
-	}
+	if (FR_OK != fr) return FALSE;
 
 	while ((fr == FR_OK) && (fno.fname[0] != 0)) /* Repeat until a file is found */
 	{
-		if ((fno.fattrib & AM_DIR) || (fno.fattrib & AM_SYS))
-		{
-		// pcAttrib = pcDirectory;
-		}
-		else if (stricmp(fno.fname, pszFileName) == 0)
-		{
+		if ((fno.fattrib & AM_DIR) || (fno.fattrib & AM_SYS)) {
+			// pcAttrib = pcDirectory;
+		} else if (stricmp(fno.fname, pszFileName) == 0) {
 			return TRUE;
 		}
 
@@ -321,5 +177,42 @@ BYTE FileExists(char* pszFileName)
 	}
 
 	return FALSE;
-#endif
 }
+
+
+void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
+	// 1. Critical Guard: If FatFs returns a null pointer, abort safely
+	if (!src || !dest) return;
+
+	dest->fsize   = src->fsize;
+	dest->fdate   = src->fdate;
+	dest->ftime   = src->ftime;
+	dest->fattrib = src->fattrib;
+
+	// 2. Logic: Prioritize the 8.3 name (altname) if it exists.
+	// If not, use the main fname (which must be 8.3 if altname is empty).
+	const char* s_ptr = (src->altname[0] != '\0') ? src->altname : src->fname;
+
+	// 3. Safety: Use strncpy to ensure we never write more than 12 chars + null
+	// This prevents the RP2350 from crashing by overwriting its own stack/heap.
+	strncpy(dest->fname, s_ptr, 12);
+	dest->fname[12] = '\0'; // Manually force the 13th byte to be NULL
+}
+
+// void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
+// 	if (!src || !dest) return;
+//
+// 	dest->fsize = src->fsize;
+// 	dest->fdate = src->fdate;
+// 	dest->ftime = src->ftime;
+// 	dest->fattrib = src->fattrib;
+//
+// 	if (src->altname[0]) {
+//         // use altname , or fallback to fname
+// 		strncpy(dest->fname, src->altname, sizeof(dest->fname) - 1);
+//     } else {
+// 		strncpy(dest->fname, src->fname, sizeof(dest->fname) - 1);
+//     }
+// 	dest->fname[sizeof(dest->fname) - 1] = '\0';
+//
+// }
