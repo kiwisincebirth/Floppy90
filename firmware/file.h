@@ -16,8 +16,9 @@ extern "C" {
 
 typedef struct {
 	byte byIsOpen;
-	FSIZE_t size;		// length of File
-	FRESULT result;		// last error during normal IO. todo
+	FSIZE_t size;		    // length of File
+	UINT bytesReadWritten;  // during last read write
+	FRESULT lastResult;		// last error during normal IO. todo
 	FIL  f;
 } file;
 
@@ -35,18 +36,23 @@ void copyFILEINFO(FILINFO_API *dest, const FILINFO *src);
 
 //-----------------------------------------------------------------------------
 
-file*    FileOpen(char* pszFileName, BYTE byMode);
-void     FileClose(file* fp);
-BYTE     FileIsOpen(file *fp);
-uint32_t FileRead(file* fp, BYTE* pby, uint32_t nSize);
-uint32_t FileWrite(file* fp, BYTE* pby, uint32_t nSize);
-void     FileSeek(file* fp, int nOffset);
-void     FileTruncate(file* fp);
-void     FileFlush(file* fp);
-void     FileCloseAll(void);
-void     FileSystemInit(void);
-int      FileReadLine(file* fp, char szLine[], int nMaxLen);
+// File Methods
 BYTE     FileExists(char* pszFileName);
+file*    FileOpen(char* pszFileName, BYTE byMode);
+BYTE     FileIsOpen(file *fp);
+FRESULT  FileWrite(file* fp, BYTE* pby, uint32_t nSize);
+FRESULT  FileRead (file* fp, BYTE* pby, uint32_t nSize);
+int      FileReadLine(file* fp, char szLine[], int nMaxLen);
+void     FileClose(file* fp);
+
+// Not currently Used
+//void     FileSeek(file* fp, int nOffset);
+//void     FileTruncate(file* fp);
+//void     FileFlush(file* fp);
+
+// Lifecycle methods for the entire Obeject
+void     FileSystemInit(void);
+void     FileCloseAll(void);
 
 #ifdef __cplusplus
 }

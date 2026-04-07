@@ -131,7 +131,7 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 
 			// Set the Current page
 			currentPage = accessPage;
-			printf("\r\ncurrentPage(%d)",currentPage);
+			printf("\r\nmemPage(%d)",currentPage);
 
 		} else if (bIsRead) { // READS of offset 123, WRITES ignored
 
@@ -139,7 +139,7 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 				// On RET (Offset 3): Move Back and Restore current page
 				ring_ptr = (ring_ptr - 1) & STACK_MASK;
 				currentPage = page_ring[ring_ptr];
-				printf("\r\ncurrentPage(%d)",currentPage);
+				printf("\r\nmemPage(%d)",currentPage);
 			}
 
 			pby = &trampoline_code[offset]; // the offset code byte to return
@@ -176,7 +176,7 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr)
 					pby = &byDataAvailable;
 				} else {
 					// writing CMD -> reset the pointer to boot block
-					printf("\r\nfbcBoot()");
+					// printf("\r\nfdcBoot()");
 					fdc_bootblockIdx = 0;
 				}
 			}
@@ -184,7 +184,7 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr)
 		case 0x37EF: // FDC Data Register
 			if (g_byEnableFDCBoot) {
 				if (bIsRead) {
-					printf(".");
+					// printf(".");
 					// read byte from the boot block
 					pby = &fdc_bootblock[fdc_bootblockIdx++];
 				}

@@ -27,9 +27,9 @@ file* FileOpen(char* pszFileName, BYTE byMode)
 
 	if (i >= MAX_FILES) return NULL;
 
-	g_fFiles[i].result = f_open(&g_fFiles[i].f, pszFileName, byMode);
+	g_fFiles[i].lastResult = f_open(&g_fFiles[i].f, pszFileName, byMode);
 
-	if (g_fFiles[i].result == FR_OK) {
+	if (g_fFiles[i].lastResult == FR_OK) {
 		g_fFiles[i].byIsOpen = TRUE;
 		g_fFiles[i].size = f_size(&g_fFiles[i].f);
 	} else {
@@ -45,58 +45,55 @@ void FileClose(file* fp)
 {
 	if ((fp == NULL) || (fp->byIsOpen == FALSE)) return;
 
-	fp->result = f_close(&fp->f); // noting the result is ignored
+	fp->lastResult = f_close(&fp->f); // noting the result is ignored
 	fp->byIsOpen = FALSE;
 }
 
 //-----------------------------------------------------------------------------
-BYTE FileIsOpen(file *fp)
+__inline BYTE FileIsOpen(file *fp)
 {
-	if (fp == NULL)	return FALSE;
-	return fp->byIsOpen;
+	return fp != NULL ? fp->byIsOpen : FALSE;
 }
 
 //-----------------------------------------------------------------------------
-uint32_t FileRead(file* fp, BYTE* pby, uint32_t nSize)
+FRESULT FileRead(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if ((fp == NULL) || (fp->byIsOpen == 0)) return 0;
+	if ((fp == NULL) || (fp->byIsOpen == 0)) return FR_INVALID_OBJECT;
 	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
 
-	UINT br;
-	fp->result = f_read(&fp->f, pby, nSize, &br);
-	return br; // return the numer of bytes read.
+	fp->lastResult = f_read(&fp->f, pby, nSize, &fp->bytesReadWritten);
+
+	return fp->lastResult;
 }
 
 //-----------------------------------------------------------------------------
-uint32_t FileWrite(file* fp, BYTE* pby, uint32_t nSize)
+FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if ((fp == NULL) || (fp->byIsOpen == 0)) return 0;
+	if ((fp == NULL) || (fp->byIsOpen == 0)) return FR_INVALID_OBJECT;
 	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
 
-	UINT bw;
-	fp->result = f_write(&fp->f, pby, nSize, &bw);
-	return bw;
+	return fp->lastResult = f_write(&fp->f, pby, nSize, &fp->bytesReadWritten);
 }
 
 //-----------------------------------------------------------------------------
 void FileSeek(file* fp, int nOffset)
 {
 	if (fp == NULL) return;
-	fp->result = f_lseek(&fp->f, nOffset);
+	fp->lastResult = f_lseek(&fp->f, nOffset);
 }
 
 //-----------------------------------------------------------------------------
 void FileFlush(file* fp)
 {
 	if (fp == NULL) return;
-	fp->result = f_sync(&fp->f);
+	fp->lastResult = f_sync(&fp->f);
 }
 
 //-----------------------------------------------------------------------------
 void FileTruncate(file* fp)
 {
 	if (fp == NULL) return;
-	fp->result = f_truncate(&fp->f);
+	fp->lastResult = f_truncate(&fp->f);
 }
 
 //-----------------------------------------------------------------------------

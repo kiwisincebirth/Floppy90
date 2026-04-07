@@ -89,5 +89,9 @@
 
 void FreHDInit(void);
 
-void frehd_port_out(word addr, byte data);
-byte frehd_port_in(word addr);
+// Z80 Port Functions
+void __not_in_flash_func(frehd_port_out)(word addr, byte data);
+byte __not_in_flash_func(frehd_port_in)(word addr);
+
+// background servicing.
+void __not_in_flash_func(ServiceFreHdStateMachine)(void);

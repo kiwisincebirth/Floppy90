@@ -16,6 +16,7 @@
 #include "frehd.h"
 
 #include <stdint.h>
+#include <util.h>
 
 #define STATUS_ERROR (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_ERR)
 #define STATUS_OK (TRS_HARD_READY | TRS_HARD_SEEKDONE )
@@ -23,10 +24,10 @@
 
 #define	AM_HID_SYS AM_HID + AM_SYS	/* Hidden System Files */
 
-// Bootload Block - Z80 Code - See LOADER.ASM
-// Byte 0 = Confirmatin Code 0xFE
+// FRE HD Bootloader Block - Z80 Code.
+// Byte 0 = Confirmation Code 0xFE
 // Byte 1 = CP nn - to skip the next byte being replaced
-// Byte 2 = Should be replaced with Code passed in request
+// Byte 2 = Should be replaced with byte passed in request
 byte boot_data_block[] = {
 	0xfe,0xfe,0xff,0x18,0x02,0x18,0x19,0x3a,
 	0x40,0x38,0xe6,0x80,0xc0,0x11,0x16,0x50,
@@ -64,56 +65,61 @@ byte boot_data_block[] = {
 	0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
 };
 
-// BOOT loader
-static bool  fhd_bootMode = false;
-static int	 fhd_bootIndex = 0;
+//-----------------------------------------------------------------------------
+// SHARED REGISTERS BETWEEN Z80 and BACKEND
 
-// COMMAND2
-static byte  fhd_command2 = 0;
+// STATUS CONTROL - USED TO SIGNAL OWNERSHIP
+static volatile byte fhd_status = 0;
 
-// DATA2
-static byte __aligned(4) fhd_data2[256 + 4] = {0}; // 1 extra byte to handle terminator
-static byte fhd_data2Index = 0; // used as index to array,auto increment
+// COMMAND2 - from Z80
+static volatile byte  fhd_command2 = 0;
 
-// SIZE2
-static byte  fhd_size2 = 0;
+// DATA2 - data buffer shared with Z80 and underlying process
+static volatile byte __aligned(4) fhd_data2[256 + 4] = {0};
+
+// SIZE2 - size of data in DATA2
+static volatile byte  fhd_size2 = 0;
+
+// ERROR2 - Actual Result of underlying FF operation
+static volatile byte  fhd_error2 = FR_OK;
+
+//-----------------------------------------------------------------------------
 
 // FreHD Open File
-static file* fhd_openFile;
+static volatile file* fhd_openFile;
 
 // DIRECTORY
 static DIR  state_dir;
 static byte  state_dir_open = 0;
-
-// ERROR2
-static byte  fhd_error2 = FR_OK;
-
-// STATUS
-static byte  fhd_status = 0;
 
 //-----------------------------------------------------------------------------
 void FreHDInit(void)
 {
 }
 
-//-----------------------------------------------------------------------------
 // --- Command table ---
 //-----------------------------------------------------------------------------
 
 // Command function type
 typedef uint8_t (*command_func_t)(uint8_t);
 
+//
+// =================================
 // STEPS
-// 1. After the Command was received
-// 2. After Data was RECEIVED (from z80) providing the SIZE bytes
-// 3. After the Data was SENT  (to  Z80) consuming the SIZE bytes
+// =================================
+//
+// 1.  After the Command was received
+// 2.  After Data was RECEIVED (from z80) providing the SIZE bytes
+// 3.  After the Data was SENT  (to  Z80) consuming the SIZE bytes
+// 10. Service the command by CORE 0, when BUSY Signalled
+//
 
 /*
  * Get version
  * 1. TRS writes COMMAND2 + wait
  * 2. TRS reads DATA2 (up to 6 bytes)
  */
-uint8_t CMD_VER(uint8_t step) {
+uint8_t __not_in_flash_func(CMD_VER)(uint8_t step) {
 	if (step == 1) {
 		fhd_data2[0] = VERSION_MAJOR;
 		fhd_data2[1] = VERSION_MINOR;
@@ -122,23 +128,28 @@ uint8_t CMD_VER(uint8_t step) {
 		fhd_data2[4] = 0; // *((UCHAR rom *) FLASH_CRC_ADDR);
 		fhd_data2[5] = 0; // *((UCHAR rom *) FLASH_CRC_ADDR+1);
 		fhd_size2 = 6;
+		return STATUS_OKDATA;
 	}
 	return STATUS_OK;
 }
 
 /*
  * Open file
- * 1. TRS writes SIZE2 (1 + strlen(filename))
- * 2. TRS writes COMMAND2 + wait
+ * 1. TRS writes COMMAND2
+ * 2. TRS writes SIZE2 (1 + strlen(filename))
  * 3. TRS writes DATA2
  *       byte 0 : open options
  *       bytes 1..n : filename
  * 4. TRS waits
  * 5. TRS checks status for error (in ERROR2 if any)
-   AND the DATA2 register contains the size of the file just opened.
+      AND the DATA2 register contains the size of the file just opened.
  */
-uint8_t CMD_OPEN(uint8_t step) {
-	if (step == 2) {
+uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
+
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
 
 //			// code to check the filename
 //        	int   nIndex = 0;
@@ -156,9 +167,7 @@ uint8_t CMD_OPEN(uint8_t step) {
 //        	}
 
 		// close existing file
-		if(fhd_openFile != NULL) {
-			FileClose(fhd_openFile);
-		}
+		FileClose((void *)fhd_openFile);
 
 		BYTE byMode = fhd_data2[0]; // first byte is the OPEN mode
 		char* psz = (char*)&fhd_data2[1]; // next bytes are the file name
@@ -166,16 +175,15 @@ uint8_t CMD_OPEN(uint8_t step) {
 		// the main open command
 		fhd_openFile = FileOpen(psz, byMode);
 
-		printf("\r\nopenFile(");
-		printf(psz);
-
 		if (fhd_openFile != NULL) {
-			fhd_error2 = fhd_openFile->result;
+			fhd_error2 = fhd_openFile->lastResult;
 			if ( fhd_openFile->byIsOpen ) {
-				// provide file size to the TRS80
-				fhd_size2 = sizeof (DWORD);
-				memcpy(fhd_data2, &fhd_openFile->size, fhd_size2);
-				printf( " %d %d) ", fhd_openFile->byIsOpen, fhd_openFile->size );
+
+				printf("\r\nopenFile(%s,%llu) ",psz,fhd_openFile->size);
+
+				fhd_size2 = sizeof (DWORD); // file size as 4 bytes
+				memcpy((void *)fhd_data2, (void *)&fhd_openFile->size, fhd_size2);
+
 				return STATUS_OKDATA;
 			}
 		}
@@ -187,26 +195,43 @@ uint8_t CMD_OPEN(uint8_t step) {
 
 /*
  * Read file
- * 1. file must have been opened by openfile()
- *    SIZE2 buffer is set
- * 2. TRS sends COMMAND2 + wait
+ * 1. File must have been opened by openfile()
+ * 2. TRS sends SIZE2 bytes to read (default 256)
+ * 2. TRS sends COMMAND2
+ * 3. TRS80 waits
  * 3. TRS checks status. If DRQ set, data was read
- *      DRQ : TRS reads DATA2 (SIZE2 bytes), - which might have changed
+ *      DRQ : TRS reads DATA2 (SIZE2 bytes)
+ *				SIZE2 may be smaller if last page EOF
  *     !DRQ : done
  *      ERR : error in ERROR2
  */
-uint8_t CMD_READ(uint8_t step) {
+uint8_t __not_in_flash_func(CMD_READ)(uint8_t step) {
+
+	// after getting Command - Signal Busy and defer processing.
 	if (step == 1) {
 
-		if ( fhd_openFile != NULL && fhd_openFile->byIsOpen ) {
+		if ( ! FileIsOpen((void *)fhd_openFile) ) {
+			fhd_error2 = FR_NO_FILE;
+			return STATUS_ERROR;
+		} else {
+			// Signal Busy and defer processing.
+			return TRS_HARD_BUSY;
+		}
+	}
 
-			UINT bytes = FileRead(fhd_openFile, fhd_data2, fhd_size2);
-			fhd_error2 = fhd_openFile->result;
+	if (step == 10) {
+
+		if ( FileIsOpen((void *)fhd_openFile) ) {
+
+			fhd_error2 = FileRead((void *)fhd_openFile, (void *)fhd_data2, fhd_size2);
 
 			if (fhd_error2 == FR_OK) {
-				printf(".");
-				fhd_size2 = bytes;
-				if (bytes > 0) {
+
+				uint32_t actualRead = fhd_openFile->bytesReadWritten;
+				fhd_size2 = (byte)actualRead; // truncated to 8bit 256->0
+
+				if (actualRead > 0) {
+					printf("-");
 					return STATUS_OKDATA; // got data
 				} else {
 					return STATUS_OK; // got no data, don't set DRQ
@@ -225,30 +250,36 @@ uint8_t CMD_READ(uint8_t step) {
 /*
  * Write file
  * 1. file must have been opened by openfile()
- * 2. TRS sends COMMAND2 + wait
+ * 2. TRS sends COMMAND2
  * 3. TRS sends SIZE2 (if not, default is 256 bytes)
- * 4. TRS waits (after sending size2 bytes)
- * 5. TRS checks status
+ * 4  TRS sends DATA2 (SIZE2) bytes to write
+ * 5. TRS waits
+ * 6. TRS checks status
  */
- uint8_t CMD_WRITE(uint8_t step) {
+ uint8_t __not_in_flash_func(CMD_WRITE)(uint8_t step) {
+
  	if (step == 1) {
-		if ( ! FileIsOpen(fhd_openFile)) {
-			fhd_error2 = FR_NO_FILE;
-			return STATUS_ERROR;
-		}
+ 		if ( ! FileIsOpen((void *)fhd_openFile) ) {
+ 			fhd_error2 = FR_NO_FILE;
+ 			return STATUS_ERROR;
+ 		}
  	}
- 	else if (step == 2) {
+
+ 	// after getting N Bytes - Signal Busy and defer processing.
+ 	if (step == 2) return TRS_HARD_BUSY;
+
+ 	if (step == 10) {
 		printf("\r\nwriteFile() ");
 
-		if ( fhd_openFile != NULL && fhd_openFile->byIsOpen ) {
+		if ( FileIsOpen((void *)fhd_openFile) ) {
 
-			UINT bytes = FileWrite(fhd_openFile, fhd_data2, fhd_size2);
-			fhd_error2 = fhd_openFile->result;
+			fhd_error2 = FileWrite((void *)fhd_openFile, (void *)fhd_data2, fhd_size2);
 
 			if (fhd_error2 == FR_OK) {
-				if (bytes < fhd_size2) {
+				if ( fhd_openFile->bytesReadWritten < fhd_size2) {
 					return STATUS_ERROR; // didnt complete write
 				} else {
+					printf("+");
 					return STATUS_OK; // success
 				}
 			} else {
@@ -259,21 +290,32 @@ uint8_t CMD_READ(uint8_t step) {
 			return STATUS_ERROR;
 		}
  	}
+
  	return STATUS_OK;
  }
 
 /*
  * Close file
  * 1. file must have been opened by openfile()
- * 2. TRS sends COMMAND2 + wait
+ * 2. TRS sends COMMAND2
+ * 3. TRS waits
  * 3. TRS checks status for ERR.
  */
-uint8_t CMD_CLOSE(uint8_t step) {
+uint8_t __not_in_flash_func(CMD_CLOSE)(uint8_t step) {
+
 	if (step == 1) {
-		printf("\r\ncloseFile() ");
-		if (FileIsOpen(fhd_openFile)) {
-			FileClose(fhd_openFile);
-			fhd_error2 = fhd_openFile->result;
+		if ( FileIsOpen((void *)fhd_openFile) ) {
+			return TRS_HARD_BUSY;
+		}
+	}
+
+	if (step == 10) {
+
+		if (FileIsOpen((void *)fhd_openFile)) {
+
+			printf("\r\ncloseFile() ");
+			FileClose((void *)fhd_openFile);
+			fhd_error2 = fhd_openFile->lastResult;
 			if (fhd_error2 != FR_OK) {
 				return STATUS_ERROR;
 			}
@@ -284,26 +326,22 @@ uint8_t CMD_CLOSE(uint8_t step) {
 }
 
 
-
 /*
  * Open a directory
  * 1. TRS issues COMMAND2
- * 1. TRS issues SIZE2, then DATA2 the path
- * 3. TRS waits
-
- * 1. TRS issues SIZE2 = strlen(path), and COMMAND2 + wait
+ * 1. TRS issues SIZE2 = strlen(path)
  * 2. TRS sends DATA2 path
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t CMD_OPENDIR(uint8_t step)
-{
-	if (step == 2) {
+uint8_t __not_in_flash_func(CMD_OPENDIR)(uint8_t step) {
+
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
 		printf("\r\nopenDir() ");
-		fhd_error2 = f_opendir(&state_dir, (const TCHAR *)&fhd_data2[0]);
-		// Ignoring the Data since it was always "/" anyway.
-		// could move to step 1 and optimize some code
-		//		fhd_error2 = f_opendir(&state_dir, ".");
+		fhd_error2 = f_opendir(&state_dir, (void *)&fhd_data2[0]);
 		if (fhd_error2 != FR_OK) {
 			fhd_size2 = 0;
 			state_dir_open = 0;
@@ -326,12 +364,24 @@ uint8_t CMD_OPENDIR(uint8_t step)
  *                   DATA2 contains directory info data.
  *           If clear: no more entries in this directory.
  */
-uint8_t CMD_READDIR(uint8_t step)
+uint8_t __not_in_flash_func(CMD_READDIR)(uint8_t step)
 {
 	static FILINFO fno;
 	static FILINFO_API api_fno;
 
+	// after getting Command - Signal Busy and defer processing.
 	if (step == 1) {
+
+		if (state_dir_open == 0) {
+			fhd_error2 = FR_NO_FILE;
+			return STATUS_ERROR;
+		} else {
+			// Signal Busy and defer processing.
+			return TRS_HARD_BUSY;
+		}
+	}
+
+	if (step == 10) {
 		if (state_dir_open == 0) {
 			// user has not done opendir() before.
 			fhd_error2 = FR_NO_PATH;
@@ -339,7 +389,6 @@ uint8_t CMD_READDIR(uint8_t step)
 		}
 		fhd_error2 = f_readdir(&state_dir, &fno);
 		if (fhd_error2 != FR_OK) return STATUS_ERROR;
-		printf(".");
 		copyFILEINFO(&api_fno,&fno);
 
 		if (api_fno.fname[0] == 0) {
@@ -348,9 +397,10 @@ uint8_t CMD_READDIR(uint8_t step)
 		}
 
 		fhd_size2 = (unsigned char) sizeof (FILINFO_API);
-		memcpy(fhd_data2, &api_fno, fhd_size2);
+		memcpy((void *)fhd_data2, &api_fno, fhd_size2);
 		return STATUS_OKDATA;
 	}
+
 	return STATUS_OK;
 }
 
@@ -371,8 +421,13 @@ uint8_t CMD_READDIR(uint8_t step)
  *			If No data then exit out
  * 5. TRS Reads SIZE2 bytes. -> goes back to 3
  */
-uint8_t CMD_DIR(uint8_t step)
+uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
 {
+
+	// todo rewrite this
+	// todo rewrite this
+	// todo rewrite this
+
 	static DIR dir;
 	static byte dir_open = 0;
 	static FILINFO fno;
@@ -398,7 +453,7 @@ uint8_t CMD_DIR(uint8_t step)
 		} else {
 			// 3. Fast inline copy. __builtin_memcpy tells the compiler
 			// to use the fastest hardware-specific move (like LDM/STM)
-			__builtin_memcpy(file_pattern, fhd_data2, 16);
+			__builtin_memcpy(file_pattern, (void *)fhd_data2, 16);
 			file_pattern[15] = '\0'; // Hard cap for safety
 		}
 
@@ -435,8 +490,7 @@ uint8_t CMD_DIR(uint8_t step)
 			// move the data into the buffer
 			copyFILEINFO(&api_fno,&fno);
 			fhd_size2 = (unsigned char) sizeof (FILINFO_API);
-			memcpy(fhd_data2, &api_fno, fhd_size2);
-			printf(".");
+			memcpy((void *)fhd_data2, &api_fno, fhd_size2);
 
 			return STATUS_OKDATA;
 
@@ -464,13 +518,16 @@ uint8_t CMD_DIR(uint8_t step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t CMD_CHANGEDIR(uint8_t step)
+uint8_t __not_in_flash_func(CMD_CHANGEDIR)(uint8_t step)
 {
-	if (step == 2) {
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
 
 		char* psz = (char*)&fhd_data2[0]; // next bytes are the file name
 
-		printf("\r\nCD( %s ) ", psz );
+		printf("\r\nCD(%s) ", psz );
 		fhd_error2 = f_chdir((const TCHAR *)&fhd_data2[0]);
 		if (fhd_error2 != FR_OK) {
 			return STATUS_ERROR;
@@ -486,9 +543,9 @@ uint8_t CMD_CHANGEDIR(uint8_t step)
 *DEL file/ext:N
 */
 
-// Command Listing
-const command_func_t command_table[MAX_COMMANDS] = {
-    [TRS_EXTRA_VERSION]   = CMD_VER,
+// Command Listing - NOTE We need this to be IN SRAM
+const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
+	[TRS_EXTRA_VERSION]   = CMD_VER,
     [TRS_EXTRA_OPENFILE]  = CMD_OPEN,
     [TRS_EXTRA_READFILE]  = CMD_READ,
     [TRS_EXTRA_WRITEFILE] = CMD_WRITE,
@@ -515,20 +572,36 @@ const command_func_t command_table[MAX_COMMANDS] = {
 
 void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
 
-    // Explicitly reject if out of bounds
-    if (fhd_command2 >= MAX_COMMANDS ) {
-        return;
-    }
+	// reject if out of bounds
+	if (__builtin_expect(fhd_command2 >= MAX_COMMANDS, 0)) return;
 
-    // Check if command exists
-    command_func_t func = command_table[fhd_command2];
-    if (func == NULL) {
-        return;
-    }
+    command_func_t func = command_table[fhd_command2]; // get the command
+    if (func == NULL) return; // if NO command, then nothing to do
 
-    // 4. Execute command and set status
-    fhd_status = func(step);
+    // Actually EXECUTE the command
+    uint8_t status_result = func(step);
+
+	// Ensure all memory writes before status
+	__DSB(); // Data Sync Barrier
+
+	// if the process Z80 Side signals BUSY then we set this State
+	// otherwise if any other status we must ensure BUST is NOT Set
+	if (status_result == TRS_HARD_BUSY) {
+		fhd_status = TRS_HARD_BUSY;
+	} else {
+	    fhd_status = status_result & ~TRS_HARD_BUSY;
+    }
 }
+
+//-----------------------------------------------------------------------------
+// ONLY USED by Z80 Core
+
+// BOOT loader Flags used by Z80 Access
+static bool  fhd_bootMode = false;
+static int	 fhd_bootIndex = 0;
+
+// Index pointer into DATA2 for Z80 R/W
+static byte fhd_data2Index = 0;
 
 //-----------------------------------------------------------------------------
 void __not_in_flash_func(frehd_port_out)(word addr, byte data)
@@ -539,9 +612,9 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 			fhd_data2[fhd_data2Index++] = data; // store the data byte into the buffer
 			fhd_data2[fhd_data2Index  ] = 0; 	// precaution, puts a null after last byte
 
-			if (fhd_data2Index==fhd_size2) {   	// if received SIZE bytes into the buffer
-				frehd_command_dispatch(2); 		// STEP 2 : When all bytes have been received
-			}
+			// STEP 2 : When all (size2) bytes have been received dispatch
+			if (fhd_data2Index==fhd_size2) frehd_command_dispatch(2);
+
 			break;
 		case SIZE2:
 			fhd_size2 = data;
@@ -605,9 +678,15 @@ byte __not_in_flash_func(frehd_port_in)(word addr)
 	return data;
 }
 
-// -----------------------
-/*
+//-----------------------------------------------------------------------------
 
+void __not_in_flash_func(ServiceFreHdStateMachine)(void) {
 
-*/
+	// IF Busy Flag Set then we need process a command
+	if ( fhd_status == TRS_HARD_BUSY ) {
 
+		// STEP 10; Service the command by CORE 0
+		frehd_command_dispatch(10);
+	}
+
+}

@@ -179,6 +179,19 @@ void InitGPIO(void)
     gpio_set_pulls(CD_PIN, true, false);
 }
 
+void __not_in_flash_func(ServiceBackendStateMachines)(void) {
+	while (true) {
+
+		ServiceCli();
+
+		if ( ! g_byResetActive) {
+			// When Not In Reset
+			ServiceFreHdStateMachine();
+			UpdateCounters();
+		}
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 int main()
 {
@@ -200,13 +213,6 @@ int main()
     // multicore_launch_core1(service_memory);
     multicore_launch_core1(ServiceZ80BusRequest);
 
-    while (true)
-    {
-        ServiceCli();
-
-    	if ( ! g_byResetActive) {
-    		// When Not In Reset
-        	UpdateCounters();
-    	}
-    }
+	// Core 0 Worker functionality
+    ServiceBackendStateMachines();
 }
