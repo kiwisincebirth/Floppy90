@@ -7,20 +7,13 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 
-// #include "sd_core.h"
 #include "defines.h"
 #include "file.h"
-// #include "system.h"
-// #include "string.h"
 
 #include "frehd.h"
 
 #include <stdint.h>
 #include <util.h>
-
-#define STATUS_ERROR (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_ERR)
-#define STATUS_OK (TRS_HARD_READY | TRS_HARD_SEEKDONE )
-#define STATUS_OKDATA (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_DRQ)
 
 #define	AM_HID_SYS AM_HID + AM_SYS	/* Hidden System Files */
 
@@ -96,8 +89,6 @@ static byte  state_dir_open = 0;
 void FreHDInit(void)
 {
 }
-
-// --- Command table ---
 //-----------------------------------------------------------------------------
 
 // Command function type
@@ -133,6 +124,8 @@ uint8_t __not_in_flash_func(CMD_VER)(uint8_t step) {
 	return STATUS_OK;
 }
 
+// ====================================================================
+
 /*
  * Open file
  * 1. TRS writes COMMAND2
@@ -151,35 +144,38 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 
 	if (step == 10) {
 
-//			// code to check the filename
-//        	int   nIndex = 0;
-//        	int   nSize =  strlen(psz);
-//        	while ((*psz != 0) && (*psz != ',') && (nIndex < nSize))
-//        	{
-//        		if (*psz == '/') { // replace / with .
-//        			*psz = '.';
-//        		}
-//        		if (*psz == ':') { // strip off drive specification
-//        			*psz = 0;
-//        		}
-//        		++psz;
-//        		++nIndex;
-//        	}
-
 		// close existing file
 		FileClose((void *)fhd_openFile);
 
 		BYTE byMode = fhd_data2[0]; // first byte is the OPEN mode
-		char* psz = (char*)&fhd_data2[1]; // next bytes are the file name
+		char* pszFromZ80 = (char*)&fhd_data2[1]; // next bytes are the file name
 
-		// the main open command
-		fhd_openFile = FileOpen(psz, byMode);
+
+
+
+		// Legacy code path
+		char cleanPath[33];
+		uint8_t driveNum;
+
+		// 1. Sanitize the string (handles /ext and :D)
+		sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
+
+		printf("\r\ncleanPath(%s) ",cleanPath);
+
+		// 2. Open it (relative to CWD)
+		fhd_openFile = FileOpen(cleanPath, byMode);
+
+
+
+
+		// // the main open command
+		// fhd_openFile = FileOpen(pszFromZ80, byMode);
 
 		if (fhd_openFile != NULL) {
 			fhd_error2 = fhd_openFile->lastResult;
 			if ( fhd_openFile->byIsOpen ) {
 
-				printf("\r\nopenFile(%s,%llu) ",psz,fhd_openFile->size);
+				printf("\r\nopenFile(%s,%llu) ",cleanPath,fhd_openFile->size);
 
 				fhd_size2 = sizeof (DWORD); // file size as 4 bytes
 				memcpy((void *)fhd_data2, (void *)&fhd_openFile->size, fhd_size2);
@@ -325,6 +321,7 @@ uint8_t __not_in_flash_func(CMD_CLOSE)(uint8_t step) {
 	return STATUS_OK;
 }
 
+// ====================================================================
 
 /*
  * Open a directory
@@ -403,6 +400,8 @@ uint8_t __not_in_flash_func(CMD_READDIR)(uint8_t step)
 
 	return STATUS_OK;
 }
+
+// ====================================================================
 
 /*
  * Directory
@@ -536,32 +535,122 @@ uint8_t __not_in_flash_func(CMD_CHANGEDIR)(uint8_t step)
 	return STATUS_OK;
 }
 
-/*
-*MKDIR {nameOfDirectory}
-*COPY file/ext:N file/ext:N
-*RENAME file/ext:N file/ext:N
-*DEL file/ext:N
+// ====================================================================
+
+
+/**
+; * Pack the parameter registers at the beginning of the FCB
+;   * Open Flag's (Existing New, ETC)
+;   * B - LRL
+;   * DE - FCB Buffer
+; * Send the 32 byte FCB block to PICO, OPEN command
 */
+#pragma pack(push, 1)		// Prevent compiler padding the structure
+typedef struct {
+	BYTE    byMode;			/* Open Mode - Defined by FF */
+	BYTE    lrl;			/* Logical Record Length 256=0 */
+	WORD	buffaddr;		/* address of in memory buffer */
+	TCHAR	fcb[32];		/* FCB containing filename */
+} OPEN_REQUEST;
+#pragma pack(pop)
 
+
+
+void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, file* f) {
+	// 1. Extract LRL
+	f->lrl = (req->lrl == 0) ? 256 : req->lrl;
+
+	// 2. Use the core processor
+	sanitizeTrs80Path((char*)req->fcb, f->fname, &f->driveId, 32);
+}
+
+
+/*
+ * Open file
+ * 1. TRS writes COMMAND2
+ * 2. TRS writes SIZE2 (1 + strlen(filename))
+ * 3. TRS writes DATA2 (36 bytes)
+ *       byte 0 : open options
+ *       byte 1 : logical record lenght 0=256
+ *       byte 2,3 : location of Buffer in TRS memory
+ *       bytes 4..36 : fcb data from TRS
+ * 4. TRS waits
+ * 5. TRS checks status for error (in ERROR2 if any)
+ * 6. DATA 2 contains
+ *       bytes 0..31 : Actual FCB data
+ */
+uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
+
+	// step 1 we need to define the number of bytes upfront.
+	if (step == 1) {
+		fhd_size2 = 32 + 4; // the fcb and 4 bytes "OPEN_REQUEST"
+	}
+
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
+
+		// cast copy the request data into OPEN_REQUEST
+		OPEN_REQUEST* openRequest = (OPEN_REQUEST*)fhd_data2;
+
+		// get an unused file object
+		file *file = findUnusedFile();
+
+		// parse the filename
+		parseRequest(openRequest, file);
+
+		// the main open command
+		// todo FileOpen(file, openRequest->byMode);
+
+		// todo
+		fhd_error2 = file->lastResult;
+		if ( file->byIsOpen ) {
+
+
+			// todo Sort out the response payload
+			// todo sort out the target FCB to return.
+
+			fhd_size2 = sizeof (DWORD); // file size as 4 bytes
+			memcpy((void *)fhd_data2, (void *)&file->size, fhd_size2);
+
+			return STATUS_OKDATA;
+		}
+		fhd_size2 = 0;
+		return STATUS_ERROR; // not opened
+	}
+	return STATUS_OK;
+}
+
+
+
+//
 // Command Listing - NOTE We need this to be IN SRAM
+//
+
 const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
+	// Standard FreHD Commands
 	[TRS_EXTRA_VERSION]   = CMD_VER,
-    [TRS_EXTRA_OPENFILE]  = CMD_OPEN,
-    [TRS_EXTRA_READFILE]  = CMD_READ,
-    [TRS_EXTRA_WRITEFILE] = CMD_WRITE,
-    [TRS_EXTRA_CLOSEFILE] = CMD_CLOSE,
-    [TRS_EXTRA_OPENDIR]   = CMD_OPENDIR,
-    [TRS_EXTRA_READDIR]   = CMD_READDIR,
+	[TRS_EXTRA_OPENFILE]  = CMD_OPEN,
+	[TRS_EXTRA_READFILE]  = CMD_READ,
+	[TRS_EXTRA_WRITEFILE] = CMD_WRITE,
+	[TRS_EXTRA_CLOSEFILE] = CMD_CLOSE,
+	[TRS_EXTRA_OPENDIR]   = CMD_OPENDIR,
+	[TRS_EXTRA_READDIR]   = CMD_READDIR,
 
-    // Newer Commands not supported on FreHD
-    // [TRS_NEWER_CLOSEDIR]  = // $10
-    [TRS_NEWER_DIR]		  = CMD_DIR,      // $11
-    [TRS_NEWER_CHANGEDIR] = CMD_CHANGEDIR // $19
-    // [TRS_NEWER_MAKEDIR] =  // $1
-    // [TRS_NEWER_RENAME] =  // $1
-    // [TRS_NEWER_DELETE] =  // $1
+	// Newer Commands not supported on FreHD
+	[TRS_NEWER_DIR]		  = CMD_DIR,      // $11
+	//
+	[TRS_NEWER_CHANGEDIR] = CMD_CHANGEDIR // $19
+	// [TRS_NEWER_COPYFILE] =  // $1A
+	// [TRS_NEWER_DELETE] =  // $1B
+	// [TRS_NEWER_MAKEDIR] =  // $1C
+	// [TRS_NEWER_RENAME] =  // $1D
+	// [TRS_NEWER_MOVE] =  // $1E
+	//
+	//[TRS_FILE_OPEN]		  = CMD_DIR,      // $11
+
 };
-
 //-----------------------------------------------------------------------------
 
 // todo the functional dispatch should be delegate to a state machine on the other thread.
@@ -690,3 +779,4 @@ void __not_in_flash_func(ServiceFreHdStateMachine)(void) {
 	}
 
 }
+

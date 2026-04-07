@@ -9,6 +9,7 @@
 #include "system.h"
 #include "file.h"
 #include "sd_core.h"
+#include "tests.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 
@@ -169,47 +170,33 @@ void ListFiles(char* pszFilter)
 	}
 }
 
+// ======================================
+
 void ProcessCommand(char* psz)
 {
-    char szParm1[16] = {""};
     char szCmd[16] = {""};
+    char szParm1[16] = {""};
 
     psz = GetWord(psz, szCmd, sizeof(szCmd)-2);
+    psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
 
-    if (stricmp(szCmd, "HELP") == 0)
-    {
+    if (stricmp(szCmd, "HELP") ==  0) {
         puts(szHelpText);
-        return;
-    }
-
-    if (stricmp(szCmd, "DIR") == 0)
-    {
-        psz = GetWord(psz, szParm1, sizeof(szParm1)-2);
+    } else if (stricmp(szCmd, "DIR") == 0) {
         ListFiles(szParm1);
-        return;
-    }
-
-    if (stricmp(szCmd, "STATUS") == 0)
-    {
+    } else if (stricmp(szCmd, "STATUS") == 0) {
         FdcProcessStatusRequest(true);
-        return;
-    }
-
-    if (stricmp(szCmd, "REBOOT") == 0)
-    {
+    } else if (stricmp(szCmd, "REBOOT") == 0) {
         watchdog_reboot(0,0,0);
-//		rom_reboot(BOOT_TYPE_NORMAL, 0, 0, 0);
-        return;
-    }
-
-    if (stricmp(szCmd, "FLASH") == 0)
-    {
+    } else if (stricmp(szCmd, "FLASH") == 0) {
 		rom_reset_usb_boot(0,0);
-        return;
+    } else if (stricmp(szCmd, "t") == 0) {
+        RunUnitTests();
+    } else {
+        puts("Unknown command");
+        puts(szHelpText);
     }
 
-    puts("Unknown command");
-    puts(szHelpText);
 }
 
 void ServiceCli(void)

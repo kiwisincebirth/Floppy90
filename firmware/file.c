@@ -1,7 +1,11 @@
 #include "defines.h"
 #include "file.h"
+
+#include <ctype.h>
+
 #include "system.h"
 #include "string.h"
+#include <util.h>
 
 //-----------------------------------------------------------------------------
 
@@ -11,8 +15,7 @@ static file    g_fFiles[MAX_FILES];
 static DIR     dj;  /* Directory object */
 static FILINFO fno; /* File information */
 
-//-----------------------------------------------------------------------------
-file* FileOpen(char* pszFileName, BYTE byMode)
+file* findUnusedFile()
 {
 	if (sd_byCardInialized == 0) {
 		return NULL;
@@ -27,17 +30,25 @@ file* FileOpen(char* pszFileName, BYTE byMode)
 
 	if (i >= MAX_FILES) return NULL;
 
-	g_fFiles[i].lastResult = f_open(&g_fFiles[i].f, pszFileName, byMode);
+	return &g_fFiles[i];
+}
 
-	if (g_fFiles[i].lastResult == FR_OK) {
-		g_fFiles[i].byIsOpen = TRUE;
-		g_fFiles[i].size = f_size(&g_fFiles[i].f);
+//-----------------------------------------------------------------------------
+file* FileOpen(char* pszFileName, BYTE byMode)
+{
+	file *file = findUnusedFile();
+
+	file->lastResult = f_open(&file->f, pszFileName, byMode);
+
+	if (file->lastResult == FR_OK) {
+		file->byIsOpen = TRUE;
+		file->size = f_size( &file->f );
 	} else {
-		g_fFiles[i].byIsOpen = FALSE;
-		g_fFiles[i].size = 0;
+		file->byIsOpen = FALSE;
+		file->size = 0;
 	}
 
-	return &g_fFiles[i];
+	return file;
 }
 
 //-----------------------------------------------------------------------------
@@ -76,25 +87,25 @@ FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 }
 
 //-----------------------------------------------------------------------------
-void FileSeek(file* fp, int nOffset)
-{
-	if (fp == NULL) return;
-	fp->lastResult = f_lseek(&fp->f, nOffset);
-}
+// void FileSeek(file* fp, int nOffset)
+// {
+// 	if (fp == NULL) return;
+// 	fp->lastResult = f_lseek(&fp->f, nOffset);
+// }
 
 //-----------------------------------------------------------------------------
-void FileFlush(file* fp)
-{
-	if (fp == NULL) return;
-	fp->lastResult = f_sync(&fp->f);
-}
+// void FileFlush(file* fp)
+// {
+// 	if (fp == NULL) return;
+// 	fp->lastResult = f_sync(&fp->f);
+// }
 
 //-----------------------------------------------------------------------------
-void FileTruncate(file* fp)
-{
-	if (fp == NULL) return;
-	fp->lastResult = f_truncate(&fp->f);
-}
+// void FileTruncate(file* fp)
+// {
+// 	if (fp == NULL) return;
+// 	fp->lastResult = f_truncate(&fp->f);
+// }
 
 //-----------------------------------------------------------------------------
 void FileCloseAll(void)
@@ -108,12 +119,13 @@ void FileCloseAll(void)
 void FileSystemInit(void)
 {
 	for (int i = 0; i < MAX_FILES; ++i) {
+		g_fFiles[i].fileId = i + 42; // unique identifier
 		g_fFiles[i].byIsOpen = false;
 	}
 }
 
 //-----------------------------------------------------------------------------
-BYTE IsEOF(file* fp)
+BYTE isFileEOF(file* fp)
 {
 	if (fp == NULL) return TRUE;
 	return f_eof(&fp->f);
@@ -125,7 +137,7 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 	char* psz;
 	int   nLen = 0;
 
-	if ((fp == NULL) || (IsEOF(fp))) return -1;
+	if ((fp == NULL) || (isFileEOF(fp))) return -1;
 	if (nMaxLen == 0) return -1;
 
 	--nMaxLen;
@@ -153,28 +165,28 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
-BYTE FileExists(char* pszFileName)
-{
-	memset(&dj, 0, sizeof(dj));
-	memset(&fno, 0, sizeof(fno));
-
-	FRESULT fr = f_findfirst(&dj, &fno, "0:", "*");
-
-	if (FR_OK != fr) return FALSE;
-
-	while ((fr == FR_OK) && (fno.fname[0] != 0)) /* Repeat until a file is found */
-	{
-		if ((fno.fattrib & AM_DIR) || (fno.fattrib & AM_SYS)) {
-			// pcAttrib = pcDirectory;
-		} else if (stricmp(fno.fname, pszFileName) == 0) {
-			return TRUE;
-		}
-
-		fr = f_findnext(&dj, &fno); /* Search for next item */
-	}
-
-	return FALSE;
-}
+// BYTE FileExists(char* pszFileName)
+// {
+// 	memset(&dj, 0, sizeof(dj));
+// 	memset(&fno, 0, sizeof(fno));
+//
+// 	FRESULT fr = f_findfirst(&dj, &fno, "0:", "*");
+//
+// 	if (FR_OK != fr) return FALSE;
+//
+// 	while ((fr == FR_OK) && (fno.fname[0] != 0)) /* Repeat until a file is found */
+// 	{
+// 		if ((fno.fattrib & AM_DIR) || (fno.fattrib & AM_SYS)) {
+// 			// pcAttrib = pcDirectory;
+// 		} else if (stricmp(fno.fname, pszFileName) == 0) {
+// 			return TRUE;
+// 		}
+//
+// 		fr = f_findnext(&dj, &fno); /* Search for next item */
+// 	}
+//
+// 	return FALSE;
+// }
 
 
 void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
@@ -213,3 +225,82 @@ void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
 // 	dest->fname[sizeof(dest->fname) - 1] = '\0';
 //
 // }
+
+/**
+ * Processes a TRS-80 style path into a FAT-compatible path.
+ * Handles: Uppercasing, / to . conversion for extensions,
+ * :D drive extraction, and legacy terminators.
+ * * @param src      The raw string from Z80 (may not be null terminated)
+ * @param dest     Buffer to store sanitized path (min 33 bytes)
+ * @param driveId  Pointer to update with extracted drive number (0-9)
+ * @param maxLen   Maximum bytes to read from src (usually 32)
+ */
+void __not_in_flash_func(sanitizeTrs80Path)(const char* src, char* dest, uint8_t* driveId, int maxLen) {
+
+	int sIdx = 0;
+    int dIdx = 0;
+    int lastSlashIdx = -1;
+    bool hasDot = false;
+
+    memset(dest, 0, 33);
+    if (driveId) *driveId = 0;
+
+    while (sIdx < maxLen) {
+        unsigned char c = src[sIdx++];
+
+        if (c == 0x0D || c == 0x03 || c == 0x00) break;
+
+        if (c == ':') {
+            if (sIdx < maxLen && isdigit((unsigned char)src[sIdx])) {
+                if (driveId) *driveId = src[sIdx] - '0';
+            }
+            break;
+        }
+
+        if (c == '.') {
+            // Rule: Check for password truncation.
+            // If we already have a dot OR we have a legacy slash-extension...
+            if (hasDot || (lastSlashIdx != -1 && (dIdx - 1 - lastSlashIdx) <= 3)) {
+                // If it's not a relative path (../), check length of what follows.
+                if (dIdx > 0 && dest[dIdx-1] != '.') {
+                    int lookAhead = 0;
+                    while (sIdx + lookAhead < maxLen && isalnum((unsigned char)src[sIdx + lookAhead])) {
+                        lookAhead++;
+                    }
+                    // If it's a long "password" (4+ chars), terminate now.
+                    if (lookAhead >= 4) break;
+                }
+            }
+        }
+
+        if (isalnum(c) || c == '/' || c == '.') {
+            c = toupper(c);
+            if (c == '/') {
+                lastSlashIdx = dIdx;
+                hasDot = false;
+            }
+            if (c == '.') hasDot = true;
+
+            if (dIdx < 32) {
+                dest[dIdx++] = (char)c;
+            }
+        }
+    }
+    dest[dIdx] = '\0';
+
+    // Final Legacy Conversion Fallback
+    if (lastSlashIdx != -1) {
+        bool dotInFinalSegment = false;
+        for (int i = lastSlashIdx + 1; i < dIdx; i++) {
+            if (dest[i] == '.') dotInFinalSegment = true;
+        }
+
+        if (!dotInFinalSegment) {
+            int charsAfterSlash = (dIdx - 1) - lastSlashIdx;
+            if (charsAfterSlash > 0 && charsAfterSlash <= 3) {
+                dest[lastSlashIdx] = '.';
+            }
+        }
+    }
+}
+

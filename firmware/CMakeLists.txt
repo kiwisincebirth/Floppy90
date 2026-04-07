@@ -50,6 +50,8 @@ add_executable(Floppy80
     hdc.c
     frehd.c
     z80_bus.c
+        tests.c
+        tests.h
 )
 
 # pull in common dependencies

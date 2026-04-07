@@ -39,6 +39,11 @@
 #define ROM_MODEL_4A  4		// model 4 azerty
 #define ROM_MODEL_4P  5
 
+// usefule return constants
+#define STATUS_ERROR (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_ERR)
+#define STATUS_OK (TRS_HARD_READY | TRS_HARD_SEEKDONE )
+#define STATUS_OKDATA (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_DRQ)
+
 // Fre HD Commands
 #define TRS_EXTRA_VERSION		0x00
 #define TRS_EXTRA_GETTIME		0x01
@@ -57,25 +62,22 @@
 // #define TRS_EXTRA_READ_HEADER	0x0E
 
 // NEWER Commands (Post FreHD)
-// If implemented fills gap in original FreHD
-#define TRS_NEWER_CLOSEDIR		0x10
+//
 // dir - is the only one that has any real output.
 #define TRS_NEWER_DIR			0x11
 //
-// cd - error, or no output
+// File Management Command - Superviser S
 #define TRS_NEWER_CHANGEDIR		0x19
-// copy - error, or no output
 #define TRS_NEWER_COPYFILE		0x1A
-// delete - error, or no output
 #define TRS_NEWER_DELETE		0x1B
-// mkdir - error or noo
 #define TRS_NEWER_MAKEDIR		0x1C
-// rename - error, or no output
 #define TRS_NEWER_RENAME		0x1D
-// move file - error, or no output
 #define TRS_NEWER_MOVE		    0x1E
 //
-#define MAX_COMMANDS            0x1E
+// File Commands
+#define TRS_FILE_OPEN		    0x20
+//
+#define MAX_COMMANDS            0x20
 
 // Fre HD Status Codes
 #define TRS_HARD_BUSY     		0x80
@@ -95,3 +97,7 @@ byte __not_in_flash_func(frehd_port_in)(word addr);
 
 // background servicing.
 void __not_in_flash_func(ServiceFreHdStateMachine)(void);
+
+// ===================================
+
+
