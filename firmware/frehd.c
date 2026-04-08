@@ -150,10 +150,7 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 		BYTE byMode = fhd_data2[0]; // first byte is the OPEN mode
 		char* pszFromZ80 = (char*)&fhd_data2[1]; // next bytes are the file name
 
-
-
-
-		// Legacy code path
+		// Sanitised
 		char cleanPath[33];
 		uint8_t driveNum;
 
@@ -163,13 +160,7 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 		printf("\r\ncleanPath(%s) ",cleanPath);
 
 		// 2. Open it (relative to CWD)
-		fhd_openFile = FileOpen(cleanPath, byMode);
-
-
-
-
-		// // the main open command
-		// fhd_openFile = FileOpen(pszFromZ80, byMode);
+		fhd_openFile = FileOpenByName(cleanPath, byMode);
 
 		if (fhd_openFile != NULL) {
 			fhd_error2 = fhd_openFile->lastResult;
@@ -422,9 +413,6 @@ uint8_t __not_in_flash_func(CMD_READDIR)(uint8_t step)
  */
 uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
 {
-
-	// todo rewrite this
-	// todo rewrite this
 	// todo rewrite this
 
 	static DIR dir;
@@ -567,22 +555,20 @@ void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, file* f) {
 
 /*
  * Open file
- * 1. TRS writes COMMAND2
- * 2. TRS writes SIZE2 (1 + strlen(filename))
- * 3. TRS writes DATA2 (36 bytes)
+ * 1. TRS writes COMMAND2, SIZE2 set to 36
+ * 2. TRS writes DATA2 (36 bytes)
  *       byte 0 : open options
  *       byte 1 : logical record lenght 0=256
  *       byte 2,3 : location of Buffer in TRS memory
  *       bytes 4..36 : fcb data from TRS
- * 4. TRS waits
- * 5. TRS checks status for error (in ERROR2 if any)
- * 6. DATA 2 contains
+ * 3. TRS waits
+ * 4. TRS checks status for error (in ERROR2 if any)
+ * 5. DATA 2 contains
  *       bytes 0..31 : Actual FCB data
  */
 uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
-	// step 1 we need to define the number of bytes upfront.
-	if (step == 1) {
+	if (step == 1) { // SET the number of bytes upfront.
 		fhd_size2 = 32 + 4; // the fcb and 4 bytes "OPEN_REQUEST"
 	}
 
@@ -601,7 +587,7 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 		parseRequest(openRequest, file);
 
 		// the main open command
-		// todo FileOpen(file, openRequest->byMode);
+		FileOpen(file, openRequest->byMode);
 
 		// todo
 		fhd_error2 = file->lastResult;
@@ -638,26 +624,20 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_EXTRA_OPENDIR]   = CMD_OPENDIR,
 	[TRS_EXTRA_READDIR]   = CMD_READDIR,
 
-	// Newer Commands not supported on FreHD
-	[TRS_NEWER_DIR]		  = CMD_DIR,      // $11
-	//
-	[TRS_NEWER_CHANGEDIR] = CMD_CHANGEDIR // $19
+	// Newer NOT on FreHD ( $10 - $17 )
+	[TRS_NEWER_DIR]		  = CMD_DIR,
+	// Directory Command ( $18 - $1F )
+	[TRS_NEWER_CHANGEDIR] = CMD_CHANGEDIR,
 	// [TRS_NEWER_COPYFILE] =  // $1A
 	// [TRS_NEWER_DELETE] =  // $1B
 	// [TRS_NEWER_MAKEDIR] =  // $1C
 	// [TRS_NEWER_RENAME] =  // $1D
 	// [TRS_NEWER_MOVE] =  // $1E
-	//
-	//[TRS_FILE_OPEN]		  = CMD_DIR,      // $11
+	// Fle Handling Commands ( $20 - $2F )
+	[TRS_FILE_OPEN]		  = CMD_FILE_OPEN
 
 };
 //-----------------------------------------------------------------------------
-
-// todo the functional dispatch should be delegate to a state machine on the other thread.
-// todo and the status should be set as BUSY, until the main thread then completes
-// todo where the main thread can then update the main thread.
-// todo in some respects this may not add any value since Z0 code will just
-// todo poll the busy flag until it is complete.
 
 void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
 
@@ -723,7 +703,7 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 
 			break;
 
-			// todo could make this configurable
+			// todo make this configurable
 		// case WRITEROM: // (read ERROR2) Bootloader Initiate Command
 		// 	fhd_bootMode = true; // boot loader Mode
 		// 	fhd_bootIndex = 0; // reset the data pointer

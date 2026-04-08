@@ -77,7 +77,7 @@
 // File Commands
 #define TRS_FILE_OPEN		    0x20
 //
-#define MAX_COMMANDS            0x20
+#define MAX_COMMANDS            0x21
 
 // Fre HD Status Codes
 #define TRS_HARD_BUSY     		0x80

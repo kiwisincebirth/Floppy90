@@ -12,7 +12,9 @@ extern "C" {
     #define FA_WRITE 0x02
 #endif
 
-#define MAX_FILES 32
+// See also the definition of FF_FS_LOCK (16)
+// which governs number of open files.
+#define MAX_FILES 16
 
 typedef struct {
 	BYTE    fileId;			// unique identifier (array Index)
@@ -53,7 +55,8 @@ void sanitizeTrs80Path(const char* src, char* dest, uint8_t* driveId, int maxLen
 
 // File Methods - Obtain a File Object
 file*    findUnusedFile();
-file*    FileOpen(char* pszFileName, BYTE byMode);
+file*    FileOpen(file* file, BYTE byMode);
+file*    FileOpenByName(char* pszFileName, BYTE byMode);
 
 // Misc Metods
 // BYTE     FileExists(char* pszFileName);

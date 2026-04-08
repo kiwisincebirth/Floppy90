@@ -404,7 +404,7 @@ void SysInit(void)
 	int   nLen;
 
 	// read the default ini file to load on init
-	f = FileOpen("/SYS/hardware.cfg", FA_READ);
+	f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
 	// f = FileOpen("system.cfg", FA_READ);
 
 	// TODO Need to move this file into SYS directory

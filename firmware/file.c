@@ -21,43 +21,89 @@ file* findUnusedFile()
 		return NULL;
 	}
 
-	// find the first unused file buffer
-	int i = 0;
+	for (int i = 0; i < MAX_FILES; i++) {
+		if (!g_fFiles[i].byIsOpen) {
+			file* fInfo = &g_fFiles[i];
 
-	while ((i < MAX_FILES) && (g_fFiles[i].byIsOpen)) {
-		++i;
+			// Optional: Clear out old metadata so we don't
+			// see "zombie" names/sizes in the debugger.
+			memset(fInfo->fname, 0, sizeof(fInfo->fname));
+			fInfo->size = 0;
+			fInfo->lastResult = 0; // FR_OK
+
+			return fInfo;
+		}
 	}
 
-	if (i >= MAX_FILES) return NULL;
-
-	return &g_fFiles[i];
+	return NULL;
 }
 
 //-----------------------------------------------------------------------------
-file* FileOpen(char* pszFileName, BYTE byMode)
-{
-	file *file = findUnusedFile();
 
-	file->lastResult = f_open(&file->f, pszFileName, byMode);
+file* FileOpen(file *fInfo, BYTE byMode) {
 
-	if (file->lastResult == FR_OK) {
-		file->byIsOpen = TRUE;
-		file->size = f_size( &file->f );
+	// THE ACTUAL OPEN
+	fInfo->lastResult = f_open(&fInfo->f, fInfo->fname, byMode);
+
+	if (fInfo->lastResult == FR_OK) {
+		fInfo->byIsOpen = TRUE;
+		fInfo->size = f_size(&fInfo->f);
 	} else {
-		file->byIsOpen = FALSE;
-		file->size = 0;
+		fInfo->byIsOpen = FALSE;
+		fInfo->size = 0;
 	}
-
-	return file;
+	return fInfo;
 }
+
+file* FileOpenByName(char* pszFileName, BYTE byMode)
+{
+	file *fInfo = findUnusedFile();
+	if (!fInfo) return NULL; // Always check for exhaustion!
+
+	// Using strncpy ensures we stop at the Null OR the limit.
+	// Since file->fname is 33 bytes (32 + \0), we copy up to 32.
+	strncpy(fInfo->fname, pszFileName, sizeof(fInfo->fname) - 1);
+	fInfo->fname[sizeof(fInfo->fname) - 1] = '\0'; // Manual safety termination
+
+	// Now Open The File
+	return FileOpen(fInfo, byMode);
+}
+
+// file* FileOpen(char* pszFileName, BYTE byMode)
+// {
+// 	file *file = findUnusedFile();
+//
+// 	memcpy( file->fname, pszFileName, sizeof(file->fname) );
+//
+// 	file->lastResult = f_open(&file->f, file->fname, byMode);
+//
+// 	if (file->lastResult == FR_OK) {
+// 		file->byIsOpen = TRUE;
+// 		file->size = f_size( &file->f );
+// 	} else {
+// 		file->byIsOpen = FALSE;
+// 		file->size = 0;
+// 	}
+//
+// 	return file;
+// }
 
 //-----------------------------------------------------------------------------
 void FileClose(file* fp)
 {
-	if ((fp == NULL) || (fp->byIsOpen == FALSE)) return;
+	// 1. Safety Gate
+	if (fp == NULL || fp->byIsOpen == FALSE) return;
 
-	fp->lastResult = f_close(&fp->f); // noting the result is ignored
+	// 2. Physical Close
+	// Even if this returns an error (e.g., SD card removed),
+	// we still want to reclaim the memory slot.
+	fp->lastResult = f_close(&fp->f);
+
+	// 3. State Reset
 	fp->byIsOpen = FALSE;
+	fp->size = 0;
+	// Note: We keep the fname in memory; it's useful for
+	// "Last File Accessed" or "Reopen" features.
 }
 
 //-----------------------------------------------------------------------------
@@ -69,21 +115,34 @@ __inline BYTE FileIsOpen(file *fp)
 //-----------------------------------------------------------------------------
 FRESULT FileRead(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if ((fp == NULL) || (fp->byIsOpen == 0)) return FR_INVALID_OBJECT;
-	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
+	if (!fp || !fp->byIsOpen) return FR_INVALID_OBJECT;
 
-	fp->lastResult = f_read(&fp->f, pby, nSize, &fp->bytesReadWritten);
+	// Default to TRS-80 sector size if 0
+	uint32_t toRead = (nSize == 0) ? 256 : nSize;
+
+	fp->lastResult = f_read(&fp->f, pby, toRead, &fp->bytesReadWritten);
+
+	// Optional: If you want to mimic TRS-80 EOF behavior,
+	// you could check if bytesReadWritten < toRead here.
 
 	return fp->lastResult;
 }
 
-//-----------------------------------------------------------------------------
 FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if ((fp == NULL) || (fp->byIsOpen == 0)) return FR_INVALID_OBJECT;
-	if (nSize==0) nSize = 0x100; // 256 bytes if 0 is passed
+	if (!fp || !fp->byIsOpen) return FR_INVALID_OBJECT;
 
-	return fp->lastResult = f_write(&fp->f, pby, nSize, &fp->bytesReadWritten);
+	uint32_t toWrite = (nSize == 0) ? 256 : nSize;
+
+	fp->lastResult = f_write(&fp->f, pby, toWrite, &fp->bytesReadWritten);
+
+	// IMPORTANT: In FatFs, if bytesReadWritten < toWrite,
+	// it usually means the SD card is physically full.
+	if (fp->lastResult == FR_OK && fp->bytesReadWritten < toWrite) {
+		fp->lastResult = FR_DENIED; // denied or Full.
+	}
+
+	return fp->lastResult;
 }
 
 //-----------------------------------------------------------------------------
