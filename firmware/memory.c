@@ -165,10 +165,26 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 void __not_in_flash_func(ServiceExtraPorts)(word addr)
 {
 	static byte byDataAvailable = 0x02; // 1771 FDC Status - data available
+	static byte byInterruptAvailable = 0x80; // Interuptt Timer Available
+	static byte byZero = 0x00;
 	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation // todo not ideal, should be passed in the request
 	volatile byte* pby = NULL; // byte to write or read.
 
 	switch (addr) {
+
+		case 0x37E0:
+			if (bIsRead) {
+
+				if (g_byRtcIntrActive) {
+					pby = &byInterruptAvailable;
+					g_byRtcIntrActive = false;
+					clr_gpio(INT_PIN);
+				} else {
+					pby = &byZero;
+				}
+			}
+			break;
+
 		case 0x37EC: // FDC Command Status Register
 			if (g_byEnableFDCBoot) {
 				if (bIsRead) {

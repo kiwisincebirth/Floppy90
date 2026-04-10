@@ -208,6 +208,10 @@ extern volatile byte     g_byEnableFDCBoot;
 extern volatile byte     g_byEnableFreHDBoot;
 extern volatile byte     g_byEnableWaitStates;
 
+// Interrupts
+extern volatile byte	g_byRaiseInterrupt;
+extern volatile byte	g_byRtcIntrActive;
+
 // Defined by SD Core
 extern volatile uint8_t  sd_byCardInialized;
 

@@ -157,8 +157,6 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 		// 1. Sanitize the string (handles /ext and :D)
 		sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
 
-		printf("\r\ncleanPath(%s) ",cleanPath);
-
 		// 2. Open it (relative to CWD)
 		fhd_openFile = FileOpenByName(cleanPath, byMode);
 
@@ -495,10 +493,14 @@ uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
 	}
 }
 
+// ====================================================================
+// ====================================================================
+// ====================================================================
+
+
 /*
- *
  * Change directory
- * CD {nameOfDirectory or /} - Sets an implicitly named directory as :0
+ * CD {nameOfDirectory or /} - Changes the current working directory
  *
  * 1. TRS issues COMMAND2
  * 1. TRS issues SIZE2, sends DATA2
@@ -523,6 +525,158 @@ uint8_t __not_in_flash_func(CMD_CHANGEDIR)(uint8_t step)
 	return STATUS_OK;
 }
 
+/*
+ * Make directory
+ * MKDIR {nameOfDirectory} - Creates a named directory
+ *
+ * 1. TRS issues COMMAND2
+ * 1. TRS issues SIZE2, sends DATA2
+ * 3. TRS waits
+ * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
+ */
+uint8_t __not_in_flash_func(CMD_MAKEEDIR)(uint8_t step)
+{
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
+
+		char* psz = (char*)&fhd_data2[0]; // next bytes are the file name
+
+		printf("\r\nMKDIR(%s) ", psz );
+		fhd_error2 = f_mkdir((const TCHAR *)&fhd_data2[0]);
+		if (fhd_error2 != FR_OK) {
+			return STATUS_ERROR;
+		}
+	}
+	return STATUS_OK;
+}
+
+/*
+ * Delete File or directory
+ * DELETE {nameOfDirectory} - delete file or directory
+ *
+ * 1. TRS issues COMMAND2
+ * 1. TRS issues SIZE2, sends DATA2
+ * 3. TRS waits
+ * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
+ */
+uint8_t __not_in_flash_func(CMD_DELETE)(uint8_t step)
+{
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
+		char* psz = (char*)&fhd_data2[0];
+		char cleanPath[33];
+		uint8_t driveNum;
+		bool hadAtLeastOneError = false;
+
+		// Use strtok to split the string by spaces
+		// Note: fhd_data2 is modified by strtok, which is fine here.
+		char* token = strtok(psz, " ");
+
+		while (token != NULL) {
+			// 1. Sanitize the current token (filename)
+			sanitizeTrs80Path(token, cleanPath, &driveNum, 32);
+
+			if (cleanPath[0] != '\0') {
+				printf("\r\nRM(%s) ", cleanPath);
+
+				// 2. Attempt to delete
+				FRESULT res = f_unlink(cleanPath);
+
+				if (res != FR_OK) {
+					printf("FAILED: %d", res);
+					fhd_error2 = res; // Store the last error
+					hadAtLeastOneError = true;
+				} else {
+					printf("OK");
+				}
+			}
+
+			// 3. Get next filename
+			token = strtok(NULL, " ");
+		}
+
+		return hadAtLeastOneError ? STATUS_ERROR : STATUS_OK;
+	}
+	return STATUS_OK;
+}
+
+// uint8_t __not_in_flash_func(CMD_DELETE)(uint8_t step)
+// {
+// 	// after getting N Bytes - Signal Busy and defer processing.
+// 	if (step == 2) return TRS_HARD_BUSY;
+//
+// 	if (step == 10) {
+//
+// 		char* psz = (char*)&fhd_data2[0]; //bytes are the file name
+//
+// 		// Sanitised
+// 		char cleanPath[33];
+// 		uint8_t driveNum;
+//
+// 		// 1. Sanitize the string (handles /ext and :D)
+// 		sanitizeTrs80Path(psz, cleanPath, &driveNum, 32);
+//
+// 		printf("\r\nRM(%s) ", cleanPath );
+// 		fhd_error2 = f_unlink(cleanPath);
+// 		if (fhd_error2 != FR_OK) {
+// 			return STATUS_ERROR;
+// 		}
+// 	}
+// 	return STATUS_OK;
+// }
+
+uint8_t __not_in_flash_func(CMD_RENAME)(uint8_t step)
+{
+	// after getting N Bytes - Signal Busy and defer processing.
+	if (step == 2) return TRS_HARD_BUSY;
+
+	if (step == 10) {
+		char* pszSrc = (char*)&fhd_data2[0];
+		char* pszDest = NULL;
+
+		// 1. Find the space between <src> and <dest>
+		char* pSpace = strchr(pszSrc, ' ');
+		if (!pSpace) {
+			fhd_error2 = FR_INVALID_NAME;
+			return STATUS_ERROR;
+		}
+
+		// 2. Null-terminate the source string at the space
+		*pSpace = '\0';
+
+		// 3. The destination starts right after the space
+		// Skip any extra spaces just in case the user typed "REN FILE1    FILE2"
+		pszDest = pSpace + 1;
+		while (*pszDest == ' ') pszDest++;
+
+		// 4. Sanitize both paths
+		char cleanSrc[33];
+		char cleanDest[33];
+		uint8_t driveSrc, driveDest;
+
+		sanitizeTrs80Path(pszSrc, cleanSrc, &driveSrc, 32);
+		sanitizeTrs80Path(pszDest, cleanDest, &driveDest, 32);
+
+		// Optional: Ensure they are on the same drive if your logic requires it
+		// FatFs f_rename generally handles cross-directory but not cross-volume
+
+		printf("\r\nREN (%s) -> (%s)", cleanSrc, cleanDest);
+
+		// 5. Execute Rename
+		fhd_error2 = f_rename(cleanSrc, cleanDest);
+
+		if (fhd_error2 != FR_OK) {
+			return STATUS_ERROR;
+		}
+	}
+	return STATUS_OK;
+}
+
+// ====================================================================
+// ====================================================================
 // ====================================================================
 
 
@@ -542,16 +696,92 @@ typedef struct {
 } OPEN_REQUEST;
 #pragma pack(pop)
 
-
-
 void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, file* f) {
 	// 1. Extract LRL
-	f->lrl = (req->lrl == 0) ? 256 : req->lrl;
+	f->lrl = req->lrl;
 
 	// 2. Use the core processor
 	sanitizeTrs80Path((char*)req->fcb, f->fname, &f->driveId, 32);
 }
 
+/**
+;  The 32 byte FCB block sent back to Z80
+; NOTES:
+;  (*) typically refers to a sensible default.
+;  Unspecified Bits they can be left as Zero
+;  MOB refers to Middle Order Byte in 24 bit values -> LSB, MOB, MSB
+;      Least Significant - Middle Order - Most Significant (Bytes)
+*/
+#pragma pack(push, 1)		// Prevent compiler padding the structure
+typedef struct {
+
+	BYTE	byte1;				// Bit 7 = 1 if the file is open. (*)
+								// Bit 7 = 0 if the file is NOT open.
+
+	BYTE	byte2;				// Bit 7 = 1 if accessing logical records of size LRL
+								// Bit 7 = 0 if accessing full sectors LRL = 0 (256)
+								// Bit 6 = 1 EOF to be set only if exceed file size - random access
+								// Bit 6 = 0 EOF to be set after every write - sequential access (*)
+								// Bit 5 = 1 the Z80 sector buffer is not populated (*)
+								// Bit 5 = 0 the Z80 sector buffer is populated
+								// Bit 4 = 1 the Z80 sector buffer contents are Dirty. Changed since last read.
+								// Bit 4 = 0 the Z80 sector buffer contents are Clean. unchanged (*)
+
+	BYTE	byte3;				// Reserved Flags / Future Use
+	WORD	buffaddr;			// 16 bit Z80 main data buffer address. copied From request
+	BYTE	nextLSB;			// LSB of the next byte (initially 0) in file to access.
+	BYTE    driveId;		    // drive number 0-9, where the file was opened.
+	BYTE    fileId;				// unique File identifier. used to access the File
+	BYTE	eofLSB;				// LSB of EOF of the File. File Size.
+	BYTE	lrl;				// Logical Record Length, zero means 256 full sector access
+	BYTE	nextMOB;			// MOB of the next byte (initially 0) in file to access.
+	BYTE	nextMSB;			// MSB of the next byte (initially 0) in file to access.
+	BYTE	eofMOB;				// MOB of EOF of the File. File Size.
+	BYTE	eofMSB;				// MSB of EOF of the File. File Size.
+
+	TCHAR	trailer[18];		// trailing data must be filled with $FF (*)
+} FCB;
+#pragma pack(pop)
+
+void FileToFCB(file* fp, FCB* fcb, OPEN_REQUEST* req) {
+	if (!fp || !fcb || !req) return;
+
+	// Init structure: Zero out, then set the $FF trailer
+	memset(fcb, 0, sizeof(FCB));
+
+	// byte1: Bit 7 = 1 (Open Status)
+	fcb->byte1 |= (fp->byIsOpen) ? 0x80 : 0x00;
+
+	// 3. byte2
+	// Bit 7 = 1 if accessing logical records of size LRL
+	// Bit 7 = 0 if accessing full sectors LRL = 0 (256)
+	fcb->byte2 |= (fp->lrl == 0) ? 0x00: 0x80;
+	// Bit 5 = 1 (Z80 sector buffer is not populated)
+	fcb->byte2 |= 0x20;
+
+	// 4. Map data from the OPEN_REQUEST
+	fcb->buffaddr = req->buffaddr;
+	fcb->lrl      = req->lrl;
+
+	// 5. System Identifiers for mapping back to RP2350 objects
+	fcb->driveId  = fp->driveId;
+	fcb->fileId   = fp->fileId;
+
+	// Extract Next Pointer (24-bit)
+	uint32_t nextPos = (uint32_t)f_tell(&fp->f);
+	fcb->nextLSB = (BYTE)(nextPos & 0xFF);
+	fcb->nextMOB = (BYTE)((nextPos >> 8) & 0xFF);
+	fcb->nextMSB = (BYTE)((nextPos >> 16) & 0xFF);
+
+	// Extract EOF/Size (24-bit)
+	uint32_t fileSize = (uint32_t)f_size(&fp->f);
+	fcb->eofLSB = (BYTE)(fileSize & 0xFF);
+	fcb->eofMOB = (BYTE)((fileSize >> 8) & 0xFF);
+	fcb->eofMSB = (BYTE)((fileSize >> 16) & 0xFF);
+
+	// Trailing Data
+	memset(fcb->trailer, 0xFF, sizeof(fcb->trailer));
+}
 
 /*
  * Open file
@@ -582,6 +812,11 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
 		// get an unused file object
 		file *file = findUnusedFile();
+		if (!file) {
+			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
+			fhd_size2 = 0;
+			return STATUS_ERROR;
+		}
 
 		// parse the filename
 		parseRequest(openRequest, file);
@@ -589,16 +824,14 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 		// the main open command
 		FileOpen(file, openRequest->byMode);
 
-		// todo
 		fhd_error2 = file->lastResult;
+
 		if ( file->byIsOpen ) {
+			FCB fcbData;
+			FileToFCB(file, &fcbData, openRequest);
 
-
-			// todo Sort out the response payload
-			// todo sort out the target FCB to return.
-
-			fhd_size2 = sizeof (DWORD); // file size as 4 bytes
-			memcpy((void *)fhd_data2, (void *)&file->size, fhd_size2);
+			fhd_size2 = sizeof (FCB); // file size as 4 bytes
+			memcpy((void *)fhd_data2, &fcbData, fhd_size2);
 
 			return STATUS_OKDATA;
 		}
@@ -607,8 +840,6 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 	}
 	return STATUS_OK;
 }
-
-
 
 //
 // Command Listing - NOTE We need this to be IN SRAM
@@ -626,13 +857,15 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 
 	// Newer NOT on FreHD ( $10 - $17 )
 	[TRS_NEWER_DIR]		  = CMD_DIR,
+
 	// Directory Command ( $18 - $1F )
 	[TRS_NEWER_CHANGEDIR] = CMD_CHANGEDIR,
 	// [TRS_NEWER_COPYFILE] =  // $1A
-	// [TRS_NEWER_DELETE] =  // $1B
-	// [TRS_NEWER_MAKEDIR] =  // $1C
-	// [TRS_NEWER_RENAME] =  // $1D
-	// [TRS_NEWER_MOVE] =  // $1E
+	[TRS_NEWER_DELETE] = CMD_DELETE, // $1B
+	[TRS_NEWER_MAKEDIR] = CMD_MAKEEDIR,
+	[TRS_NEWER_RENAME] = CMD_RENAME, // $1D
+	// [TRS_NEWER_PWD] =  // $1E
+
 	// Fle Handling Commands ( $20 - $2F )
 	[TRS_FILE_OPEN]		  = CMD_FILE_OPEN
 

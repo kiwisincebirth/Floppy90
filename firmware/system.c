@@ -27,9 +27,12 @@ volatile byte g_byEnableFDCBoot;
 volatile byte g_byEnableFreHDBoot;
 volatile byte g_byEnableWaitStates;
 
-volatile byte g_byRtcIntrActive;
-volatile byte g_byResetActive;
+// interrupt generation
 volatile byte g_byRaiseInterrupt;
+volatile byte g_byRtcIntrActive;
+
+// in reset mode
+volatile byte g_byResetActive;
 
 volatile uint32_t g_dwLedCount;
 

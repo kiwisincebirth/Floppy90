@@ -72,7 +72,7 @@
 #define TRS_NEWER_DELETE		0x1B
 #define TRS_NEWER_MAKEDIR		0x1C
 #define TRS_NEWER_RENAME		0x1D
-#define TRS_NEWER_MOVE		    0x1E
+#define TRS_NEWER_PWD		    0x1E
 //
 // File Commands
 #define TRS_FILE_OPEN		    0x20

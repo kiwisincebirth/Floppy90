@@ -20,7 +20,7 @@ typedef struct {
 	BYTE    fileId;			// unique identifier (array Index)
 	BYTE    byIsOpen;		// is it open / in use.
 	FSIZE_t size;		    // length of File at open time
-	uint16_t lrl;			// Logical Record Length (1-256)
+	BYTE	lrl;			// Logical Record Length (1-255) 0=256
 	UINT    bytesReadWritten;  // during last read/write
 	FRESULT lastResult;		// last error during normal IO.
 	BYTE    driveId;		// drive number 0-9, default is 0
