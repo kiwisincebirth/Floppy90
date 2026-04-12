@@ -65,6 +65,11 @@
 //
 // dir - is the only one that has any real output.
 #define TRS_NEWER_DIR			0x11
+
+// File Commands API
+#define TRS_FILE_OPEN		    0x14
+#define TRS_FILE_CLOSE		    0x15
+#define TRS_FILE_KILL		    0x16
 //
 // File Management Command - Superviser S
 #define TRS_NEWER_CHANGEDIR		0x19
@@ -74,10 +79,15 @@
 #define TRS_NEWER_RENAME		0x1D
 #define TRS_NEWER_PWD		    0x1E
 //
-// File Commands
-#define TRS_FILE_OPEN		    0x20
+// File Commands API
+#define TRS_FILE_READ		    0x20
+#define TRS_FILE_WRITE		    0x21
+#define TRS_FILE_SOF		    0x22
+#define TRS_FILE_POS		    0x23
+#define TRS_FILE_BACK		    0x24
+#define TRS_FILE_EOF		    0x25
 //
-#define MAX_COMMANDS            0x21
+#define MAX_COMMANDS            0x26
 
 // Fre HD Status Codes
 #define TRS_HARD_BUSY     		0x80

@@ -11,9 +11,60 @@
 
 static file    g_fFiles[MAX_FILES];
 
-// todo not sure why these are static ?
-static DIR     dj;  /* Directory object */
-static FILINFO fno; /* File information */
+//------------------------------------------------------------------------------
+
+void FileSystemInit(void)
+{
+	for (int i = 0; i < MAX_FILES; ++i) {
+		g_fFiles[i].fileId = i + 42; // unique identifier
+		g_fFiles[i].byIsOpen = false;
+	}
+}
+
+//------------------------------------------------------------------------------
+
+// In Pico use a translate function to convert from 0-20 to 128-192
+// where the 128-192 maps to TRSDOS 0-63
+// These translations map expected Codes to trsdos counterparts
+// we provide a mapping where we can, or leave unchanged where unsure.
+// NOTE : ZERO FR_OK should remain as ZERO !!!
+
+// TRS Unmapped Errors
+// DIRSPCFUL$	EQU	26	; Directory Space Full
+// DSCSPCFUL$	EQU	27	; Disk Space Full
+
+// FF Unmapped Errors
+// 	DB	$1A	; (7) Access denied due to prohibited access or directory full
+// 	DB	$19	; (8) Name Collission
+
+BYTE resultTranslation[] = {
+	FR_OK,					/* (0) Succeeded */
+	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
+	FR_INT_ERR,				/* (2) Assertion failed */
+	FR_NOT_READY,			/* (3) The physical drive cannot work */
+	TRS_FILE_NOT_FOUND, 	/* (4) Could not find the file */
+	TRS_PATH_NOT_FOUND,		/* (5) Could not find the path */
+	TRS_ILLEGAL_FILENAME,	/* (6) The path name format is invalid */
+	FR_DENIED,				/* (7) Access denied or directory full */
+	FR_EXIST,				/* (8) Name Collision File already exists */
+	TRS_ILL_FILENUMBER,		/* (9) The file/directory object is invalid */
+	TRS_WRITE_PROTECTED,	/* (10) The physical drive is write protected */
+	TRS_ILLEGAL_DRIVENUM,	/* (11) The logical drive number is invalid */
+	FR_NOT_ENABLED,			/* (12) The volume has no work area */
+	FR_NO_FILESYSTEM,		/* (13) There is no valid FAT volume */
+	FR_MKFS_ABORTED,		/* (14) The f_mkfs() aborted due to any problem */
+	FR_TIMEOUT,				/* (15) Could not get a grant to access the volume within defined period */
+	FR_LOCKED,				/* (16) The operation is rejected according to the file sharing policy */
+	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
+	FR_TOO_MANY_OPEN_FILES,	/* (18) Number of open files > FF_FS_LOCK */
+	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */
+};
+
+BYTE __inline trans(FRESULT result) {
+	return result <= 19 ? resultTranslation[result] : result;
+}
+
+//------------------------------------------------------------------------------
 
 file* findUnusedFile()
 {
@@ -29,8 +80,28 @@ file* findUnusedFile()
 			// see "zombie" names/sizes in the debugger.
 			memset(fInfo->fname, 0, sizeof(fInfo->fname));
 			fInfo->size = 0;
-			fInfo->lastResult = 0; // FR_OK
+			fInfo->lastResult = FR_OK;
 
+			return fInfo;
+		}
+	}
+
+	return NULL;
+}
+
+/**
+ * Find a file we previously opened.
+ */
+file* findOpenFile( BYTE fileId )
+{
+	if (sd_byCardInialized == 0) {
+		return NULL;
+	}
+
+	for (int i = 0; i < MAX_FILES; i++) {
+		if ( g_fFiles[i].fileId == fileId && g_fFiles[i].byIsOpen ) {
+			file* fInfo = &g_fFiles[i];
+			// potentially update its internal state based on passing an FCB
 			return fInfo;
 		}
 	}
@@ -40,10 +111,12 @@ file* findUnusedFile()
 
 //-----------------------------------------------------------------------------
 
-file* FileOpen(file *fInfo, BYTE byMode) {
+BYTE FileOpen(file *fInfo, BYTE byMode) {
+
+	if (fInfo==NULL) return -1;
 
 	// THE ACTUAL OPEN
-	fInfo->lastResult = f_open(&fInfo->f, fInfo->fname, byMode);
+	fInfo->lastResult = trans( f_open(&fInfo->f, fInfo->fname, byMode) );
 
 	if (fInfo->lastResult == FR_OK) {
 		fInfo->byIsOpen = TRUE;
@@ -52,7 +125,7 @@ file* FileOpen(file *fInfo, BYTE byMode) {
 		fInfo->byIsOpen = FALSE;
 		fInfo->size = 0;
 	}
-	return fInfo;
+	return fInfo->lastResult;
 }
 
 file* FileOpenByName(char* pszFileName, BYTE byMode)
@@ -65,45 +138,29 @@ file* FileOpenByName(char* pszFileName, BYTE byMode)
 	strncpy(fInfo->fname, pszFileName, sizeof(fInfo->fname) - 1);
 	fInfo->fname[sizeof(fInfo->fname) - 1] = '\0'; // Manual safety termination
 
-	// Now Open The File
-	return FileOpen(fInfo, byMode);
+	BYTE result = FileOpen(fInfo, byMode);
+
+	return fInfo;
 }
 
-// file* FileOpen(char* pszFileName, BYTE byMode)
-// {
-// 	file *file = findUnusedFile();
-//
-// 	memcpy( file->fname, pszFileName, sizeof(file->fname) );
-//
-// 	file->lastResult = f_open(&file->f, file->fname, byMode);
-//
-// 	if (file->lastResult == FR_OK) {
-// 		file->byIsOpen = TRUE;
-// 		file->size = f_size( &file->f );
-// 	} else {
-// 		file->byIsOpen = FALSE;
-// 		file->size = 0;
-// 	}
-//
-// 	return file;
-// }
-
 //-----------------------------------------------------------------------------
-void FileClose(file* fp)
+FRESULT FileClose(file* fp)
 {
 	// 1. Safety Gate
-	if (fp == NULL || fp->byIsOpen == FALSE) return;
+	if (fp == NULL || fp->byIsOpen == FALSE) return FR_OK;
 
 	// 2. Physical Close
 	// Even if this returns an error (e.g., SD card removed),
 	// we still want to reclaim the memory slot.
-	fp->lastResult = f_close(&fp->f);
+	fp->lastResult = trans(f_close(&fp->f) );
 
 	// 3. State Reset
 	fp->byIsOpen = FALSE;
 	fp->size = 0;
 	// Note: We keep the fname in memory; it's useful for
 	// "Last File Accessed" or "Reopen" features.
+
+	return fp->lastResult;
 }
 
 //-----------------------------------------------------------------------------
@@ -115,31 +172,31 @@ __inline BYTE FileIsOpen(file *fp)
 //-----------------------------------------------------------------------------
 FRESULT FileRead(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if (!fp || !fp->byIsOpen) return FR_INVALID_OBJECT;
+	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
 	// Default to TRS-80 sector size if 0
 	uint32_t toRead = (nSize == 0) ? 256 : nSize;
 
-	fp->lastResult = f_read(&fp->f, pby, toRead, &fp->bytesReadWritten);
+	fp->lastResult = trans(f_read(&fp->f, pby, toRead, &fp->bytesReadWritten));
 
-	// Optional: If you want to mimic TRS-80 EOF behavior,
-	// you could check if bytesReadWritten < toRead here.
+	// todo Optional: If you want to mimic TRS-80 EOF behavior,
+	// todo you could check if bytesReadWritten < toRead here.
 
 	return fp->lastResult;
 }
 
 FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 {
-	if (!fp || !fp->byIsOpen) return FR_INVALID_OBJECT;
+	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
 	uint32_t toWrite = (nSize == 0) ? 256 : nSize;
 
-	fp->lastResult = f_write(&fp->f, pby, toWrite, &fp->bytesReadWritten);
+	fp->lastResult = trans(f_write(&fp->f, pby, toWrite, &fp->bytesReadWritten));
 
 	// IMPORTANT: In FatFs, if bytesReadWritten < toWrite,
 	// it usually means the SD card is physically full.
 	if (fp->lastResult == FR_OK && fp->bytesReadWritten < toWrite) {
-		fp->lastResult = FR_DENIED; // denied or Full.
+		fp->lastResult = FR_DENIED; // todo denied or Full. todo confirm error
 	}
 
 	return fp->lastResult;
@@ -171,15 +228,6 @@ void FileCloseAll(void)
 {
 	for (int i = 0; i < MAX_FILES; ++i) {
 		FileClose(&g_fFiles[i]);
-	}
-}
-
-//-----------------------------------------------------------------------------
-void FileSystemInit(void)
-{
-	for (int i = 0; i < MAX_FILES; ++i) {
-		g_fFiles[i].fileId = i + 42; // unique identifier
-		g_fFiles[i].byIsOpen = false;
 	}
 }
 
@@ -223,6 +271,9 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 	return nLen;
 }
 
+// static DIR     dj;  /* Directory object */
+// static FILINFO fno; /* File information */
+
 ////////////////////////////////////////////////////////////////////////////////////
 // BYTE FileExists(char* pszFileName)
 // {
@@ -247,6 +298,45 @@ int FileReadLine(file* fp, char szLine[], int nMaxLen)
 // 	return FALSE;
 // }
 
+////////////////////////////////////////////////////////////////////////////////////
+
+__inline BYTE DirOpen( DIR* dp, const TCHAR* path	) {
+	return trans( f_opendir(dp, path) );
+}
+
+__inline BYTE DirRead( DIR* dp, FILINFO* fno	) {
+	return trans( f_readdir(dp, fno) );
+}
+
+__inline BYTE DirFindFirst( DIR* dp,	FILINFO* fno, const TCHAR* path, const TCHAR* pattern ) {
+	return trans( f_findfirst(dp, fno, path, pattern) );
+}
+
+__inline BYTE DirFindNext ( DIR* dp,	FILINFO* fno ) {
+	return trans( f_findnext(dp, fno) );
+}
+__inline BYTE DirChange ( const TCHAR* path ) {
+	return trans( f_chdir( path ) );
+}
+
+__inline BYTE DirMake ( const TCHAR* path ) {
+	return trans( f_mkdir( path ) );
+}
+
+__inline BYTE FileDelete ( const TCHAR* file ) {
+	return trans( f_unlink( file ) );
+}
+
+__inline BYTE FileRename ( const TCHAR* old, const TCHAR* new ) {
+	return trans( f_rename( old, new ) );
+}
+
+__inline BYTE CurrentDirectory (TCHAR* buff,	UINT len) {
+	return trans( f_getcwd( buff, len ) );
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////
 
 void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
 	// 1. Critical Guard: If FatFs returns a null pointer, abort safely
@@ -266,24 +356,6 @@ void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
 	strncpy(dest->fname, s_ptr, 12);
 	dest->fname[12] = '\0'; // Manually force the 13th byte to be NULL
 }
-
-// void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
-// 	if (!src || !dest) return;
-//
-// 	dest->fsize = src->fsize;
-// 	dest->fdate = src->fdate;
-// 	dest->ftime = src->ftime;
-// 	dest->fattrib = src->fattrib;
-//
-// 	if (src->altname[0]) {
-//         // use altname , or fallback to fname
-// 		strncpy(dest->fname, src->altname, sizeof(dest->fname) - 1);
-//     } else {
-// 		strncpy(dest->fname, src->fname, sizeof(dest->fname) - 1);
-//     }
-// 	dest->fname[sizeof(dest->fname) - 1] = '\0';
-//
-// }
 
 /**
  * Processes a TRS-80 style path into a FAT-compatible path.

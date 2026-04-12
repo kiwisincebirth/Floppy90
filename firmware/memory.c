@@ -131,7 +131,7 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 
 			// Set the Current page
 			currentPage = accessPage;
-			printf("\r\nmemPage(%d)",currentPage);
+			// printf("\r\nmemPage(%d)",currentPage);
 
 		} else if (bIsRead) { // READS of offset 123, WRITES ignored
 
@@ -139,7 +139,7 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 				// On RET (Offset 3): Move Back and Restore current page
 				ring_ptr = (ring_ptr - 1) & STACK_MASK;
 				currentPage = page_ring[ring_ptr];
-				printf("\r\nmemPage(%d)",currentPage);
+				// printf("\r\nmemPage(%d)",currentPage);
 			}
 
 			pby = &trampoline_code[offset]; // the offset code byte to return
