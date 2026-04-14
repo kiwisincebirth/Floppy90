@@ -1,24 +1,25 @@
 
+#ifndef FREHD_H
+#define FREHD_H
+
+// ===================================
+
 // TRS model : passed by the patched rom
 //#define		ROM_MODEL_1	1
 //#define		ROM_MODEL_3	3
 
 // FreHD Specific PORT Interface defines
-; 									// HDD C0 - C1 - Winchester Hard Disk
+ 									// HDD C0 - C1 - Winchester Hard Disk
 #define		DATA2	  	0xC2		// FreHd
 #define		SIZE2     	0xC3		// FreHd
 #define		COMMAND2  	0xC4		// FreHd write
 #define		READROM		0xC4		// FreHd read - get confirmation and get BOOT image
 #define		ERROR2    	0xC5		// FreHd read,
 #define		WRITEROM	0xC5		// FreHd write - command to get a BOOT Image
-;
-// NEW REGISTERS
-// #define		DATA3	  	0xC6		// read / write
-// #define		COMMAND3  	0xC7		// write
-;
+#define		FILEID2	  	0xC6		// Identifies The File ID for File operations
+#define		NOTUSED  	0xC7		// Not Used
 ; 									// HDD C8-CE - Winchester Hard Disk
 #define		STATUS    	0xCF		// HDD CF - Frehd - Piggy Backed on the Hard Drive Status
-;
 
 // 0xCF - Register 7 for WD1010 Winchester Disk Controller Chip.
 //		  Read = Status Register:
@@ -39,7 +40,7 @@
 #define ROM_MODEL_4A  4		// model 4 azerty
 #define ROM_MODEL_4P  5
 
-// usefule return constants
+// useful return constants
 #define STATUS_ERROR (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_ERR)
 #define STATUS_OK (TRS_HARD_READY | TRS_HARD_SEEKDONE )
 #define STATUS_OKDATA (TRS_HARD_READY | TRS_HARD_SEEKDONE | TRS_HARD_DRQ)
@@ -55,23 +56,18 @@
 #define TRS_EXTRA_BOOTLOADER	0x07
 #define TRS_EXTRA_OPENDIR		0x08
 #define TRS_EXTRA_READDIR		0x09
-// #define TRS_EXTRA_MOUNTDRIVE	0x0A
-// #define TRS_EXTRA_SEEKFILE		0x0B
-// #define TRS_EXTRA_INFODRIVE		0x0C
-// #define TRS_EXTRA_IMAGE			0x0D
-// #define TRS_EXTRA_READ_HEADER	0x0E
-
+//
 // NEWER Commands (Post FreHD)
 //
-// dir - is the only one that has any real output.
+// General Functions		($10 - $13)
 #define TRS_NEWER_DIR			0x11
-
-// File Commands API
+//
+// File Commands API		($14 - $17)
 #define TRS_FILE_OPEN		    0x14
 #define TRS_FILE_CLOSE		    0x15
 #define TRS_FILE_KILL		    0x16
 //
-// File Management Command - Superviser S
+// File Management Command	($18 - $1F)
 #define TRS_NEWER_CHANGEDIR		0x19
 #define TRS_NEWER_COPYFILE		0x1A
 #define TRS_NEWER_DELETE		0x1B
@@ -86,8 +82,9 @@
 #define TRS_FILE_POS		    0x23
 #define TRS_FILE_BACK		    0x24
 #define TRS_FILE_EOF		    0x25
+#define TRS_FILE_FCB			0x26
 //
-#define MAX_COMMANDS            0x26
+#define MAX_COMMANDS            0x27
 
 // Fre HD Status Codes
 #define TRS_HARD_BUSY     		0x80
@@ -110,4 +107,4 @@ void __not_in_flash_func(ServiceFreHdStateMachine)(void);
 
 // ===================================
 
-
+#endif // FREHD_H

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <hardware/clocks.h>
 
 #include "tusb.h"
 #include "stdio.h"
@@ -31,12 +32,13 @@ static char*   g_pszVersion = {(char*)VERSION_STRING};
 
 static char szHelpText[] = {
                         "\n"
-                        "help       - returns this message\n"
-                        "reboot     - Reboot normally\n"
+                        "status     - returns the current status\n"
                         "flash      - Reboot into BOOTSEL mode\n"
-                        "status     - returns the current FDC status\n"
-                        "dir filter - returns a directory listing of the root folder of the SD-Card\n"
-                        "             optionally include a filter.  For example dir .ini\n"
+                        "reboot     - Reboot normally\n"
+                        "dir filter - directory list of the SD-Card\n"
+                        "             optional filter. e.g. dir ini\n"
+                        "tests      - runs limited unit tests\n"
+                        "help       - this message\n"
                     };
 
 void InitCli(void)
@@ -90,7 +92,7 @@ void FdcProcessStatusRequest(byte print)
 		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r");
 	}
 
-	strcpy_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, (char*)"Pico FDC Version ");
+	strcpy_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, (char*)"Firmware V ");
 	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, g_pszVersion);
 	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
 	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
@@ -110,6 +112,13 @@ void FdcProcessStatusRequest(byte print)
     sprintf(szBuf, "EnableWaitStates = %d", g_byEnableWaitStates);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    // Get the system clock frequency in Hertz
+    uint16_t mhz = clock_get_hz(clk_sys) / 1000000;
+
+    sprintf(szBuf, "Clock Speed   = %u Mhz", mhz );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
     sprintf(szBuf, "Card Inserted = %d", get_cd() );
@@ -186,9 +195,13 @@ void ProcessCommand(char* psz)
         ListFiles(szParm1);
     } else if (stricmp(szCmd, "STATUS") == 0) {
         FdcProcessStatusRequest(true);
+    } else if (stricmp(szCmd, "s") == 0) {
+        FdcProcessStatusRequest(true);
     } else if (stricmp(szCmd, "REBOOT") == 0) {
         watchdog_reboot(0,0,0);
     } else if (stricmp(szCmd, "FLASH") == 0) {
+        rom_reset_usb_boot(0,0);
+    } else if (stricmp(szCmd, "f") == 0) {
 		rom_reset_usb_boot(0,0);
     } else if (stricmp(szCmd, "t") == 0) {
         RunUnitTests();

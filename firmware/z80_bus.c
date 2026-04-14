@@ -54,7 +54,8 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 			// first check the address is serviceable
 			if (extraMem || highOrder ) {
 
-				if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
+				// address lookup in range so add wait state
+				// if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
 				// flip to enable low order address as input
 				set_gpio(ADDRH_OE_PIN);
@@ -78,8 +79,6 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 
 		} else { // Assume it is a IO Request
 
-			if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
-
 			// flip to enable low order address as input
 			set_gpio(ADDRH_OE_PIN);
 			clr_gpio(ADDRL_OE_PIN);
@@ -91,18 +90,20 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 
 			if ( (addr >= 0xC0) && (addr < 0xD0) ) {
 
-				if (!(bus & 0x01)) { // low on iORQ IN
+				// IO address in range so servicing Request
+				// if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
+				if (!(bus & 0x01)) { // low on iORQ IN
 					FinishReadOperation(frehd_port_in(addr));
 
 				} else if (!(bus & 0x08)) { // low on iORQ OUT
-
 					frehd_port_out(addr, FinishWriteOperation());
 				}
 			}
 		}
 
-		clr_gpio(WAIT_PIN); // remove any waits
+    	// remove any waits
+		clr_gpio(WAIT_PIN);
 
 		// wait for ALL of MREQ, IN, RD, WR and OUT to go inactive(HIGH)
 		// this is after the last bus operation

@@ -399,25 +399,16 @@ void SysProcessConfigEntry(char szLabel[], char* psz) {
 ///////////////////////////////////////////////////////////////////////////////
 void SysInit(void)
 {
-	file* f;
 	char  szLine[64];
-	char  szSection[16];
 	char  szLabel[32];
 	char* psz;
-	int   nLen;
 
 	// read the default ini file to load on init
-	f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
-	// f = FileOpen("system.cfg", FA_READ);
+	TFILE* f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
 
-	// TODO Need to move this file into SYS directory
+	if (f == NULL) return;
 
-	if (f == NULL)
-	{
-		return;
-	}
-
-	nLen = FileReadLine(f, (BYTE*)szLine, sizeof(szLine)-2);
+	int nLen = FileReadLine(f, szLine, sizeof(szLine)-2);
 
 	while (nLen >= 0)
 	{
@@ -430,7 +421,7 @@ void SysInit(void)
 			SysProcessConfigEntry(szLabel, psz);
 		}
 
-		nLen = FileReadLine(f, (BYTE*)szLine, 126);
+		nLen = FileReadLine(f, szLine, 126);
 	}
 
 	FileClose(f);

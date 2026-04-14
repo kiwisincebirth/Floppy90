@@ -9,7 +9,7 @@
 
 //-----------------------------------------------------------------------------
 
-static file    g_fFiles[MAX_FILES];
+static TFILE    g_fFiles[MAX_FILES];
 
 //------------------------------------------------------------------------------
 
@@ -33,9 +33,8 @@ void FileSystemInit(void)
 // DIRSPCFUL$	EQU	26	; Directory Space Full
 // DSCSPCFUL$	EQU	27	; Disk Space Full
 
-// FF Unmapped Errors
-// 	DB	$1A	; (7) Access denied due to prohibited access or directory full
-// 	DB	$19	; (8) Name Collission
+// 	DB	$1A	; (7) Access denied or directory full
+// 	DB	$19	; (8) File Path Exists : Name Collission
 
 BYTE resultTranslation[] = {
 	FR_OK,					/* (0) Succeeded */
@@ -66,85 +65,69 @@ BYTE __inline trans(FRESULT result) {
 
 //------------------------------------------------------------------------------
 
-file* findUnusedFile()
+TFILE* findUnusedFile()
 {
-	if (sd_byCardInialized == 0) {
-		return NULL;
-	}
+	if (sd_byCardInialized == 0) return NULL;
 
 	for (int i = 0; i < MAX_FILES; i++) {
-		if (!g_fFiles[i].byIsOpen) {
-			file* fInfo = &g_fFiles[i];
+		TFILE *fInfo = &g_fFiles[i];
 
-			// Optional: Clear out old metadata so we don't
-			// see "zombie" names/sizes in the debugger.
+		if ( ! fInfo->byIsOpen ) {
 			memset(fInfo->fname, 0, sizeof(fInfo->fname));
-			fInfo->size = 0;
 			fInfo->lastResult = FR_OK;
-
+			fInfo->bytesReadWritten = 0;
+			fInfo->lrl = 0;
+			fInfo->driveId = 0;
 			return fInfo;
 		}
 	}
-
 	return NULL;
 }
 
 /**
  * Find a file we previously opened.
  */
-file* findOpenFile( BYTE fileId )
+TFILE* findOpenFile( BYTE fileId )
 {
-	if (sd_byCardInialized == 0) {
-		return NULL;
-	}
+	if (sd_byCardInialized == 0) return NULL;
 
 	for (int i = 0; i < MAX_FILES; i++) {
-		if ( g_fFiles[i].fileId == fileId && g_fFiles[i].byIsOpen ) {
-			file* fInfo = &g_fFiles[i];
-			// potentially update its internal state based on passing an FCB
+		TFILE *fInfo = &g_fFiles[i];
+
+		if ( fInfo->fileId == fileId && fInfo->byIsOpen ) {
 			return fInfo;
 		}
 	}
-
 	return NULL;
 }
 
 //-----------------------------------------------------------------------------
 
-BYTE FileOpen(file *fInfo, BYTE byMode) {
-
-	if (fInfo==NULL) return -1;
-
-	// THE ACTUAL OPEN
-	fInfo->lastResult = trans( f_open(&fInfo->f, fInfo->fname, byMode) );
-
-	if (fInfo->lastResult == FR_OK) {
-		fInfo->byIsOpen = TRUE;
-		fInfo->size = f_size(&fInfo->f);
-	} else {
-		fInfo->byIsOpen = FALSE;
-		fInfo->size = 0;
-	}
-	return fInfo->lastResult;
-}
-
-file* FileOpenByName(char* pszFileName, BYTE byMode)
+TFILE* FileOpenByName(char* pszFileName, BYTE byMode)
 {
-	file *fInfo = findUnusedFile();
+	TFILE *fInfo = findUnusedFile();
 	if (!fInfo) return NULL; // Always check for exhaustion!
 
-	// Using strncpy ensures we stop at the Null OR the limit.
-	// Since file->fname is 33 bytes (32 + \0), we copy up to 32.
-	strncpy(fInfo->fname, pszFileName, sizeof(fInfo->fname) - 1);
-	fInfo->fname[sizeof(fInfo->fname) - 1] = '\0'; // Manual safety termination
+	// THE ACTUAL OPEN
+	fInfo->lastResult = trans( f_open(&fInfo->f, pszFileName, byMode) );
 
-	BYTE result = FileOpen(fInfo, byMode);
+	if (fInfo->lastResult == FR_OK) {
+
+		// basic properties
+		fInfo->byIsOpen = TRUE;
+
+		// copy the File name
+		// Using strncpy ensures we stop at the Null OR the limit.
+		// Since file->fname is 33 bytes (32 + \0), we copy up to 32.
+		strncpy(fInfo->fname, pszFileName, sizeof(fInfo->fname) - 1);
+		fInfo->fname[sizeof(fInfo->fname) - 1] = '\0'; // Manual safety termination
+	}
 
 	return fInfo;
 }
 
 //-----------------------------------------------------------------------------
-FRESULT FileClose(file* fp)
+FRESULT FileClose(TFILE* fp)
 {
 	// 1. Safety Gate
 	if (fp == NULL || fp->byIsOpen == FALSE) return FR_OK;
@@ -156,7 +139,6 @@ FRESULT FileClose(file* fp)
 
 	// 3. State Reset
 	fp->byIsOpen = FALSE;
-	fp->size = 0;
 	// Note: We keep the fname in memory; it's useful for
 	// "Last File Accessed" or "Reopen" features.
 
@@ -164,13 +146,13 @@ FRESULT FileClose(file* fp)
 }
 
 //-----------------------------------------------------------------------------
-__inline BYTE FileIsOpen(file *fp)
+__inline BYTE FileIsOpen(TFILE *fp)
 {
 	return fp != NULL ? fp->byIsOpen : FALSE;
 }
 
 //-----------------------------------------------------------------------------
-FRESULT FileRead(file* fp, BYTE* pby, uint32_t nSize)
+FRESULT FileRead(TFILE* fp, BYTE* pby, uint32_t nSize)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
@@ -185,7 +167,7 @@ FRESULT FileRead(file* fp, BYTE* pby, uint32_t nSize)
 	return fp->lastResult;
 }
 
-FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
+FRESULT FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
@@ -196,7 +178,8 @@ FRESULT FileWrite(file* fp, BYTE* pby, uint32_t nSize)
 	// IMPORTANT: In FatFs, if bytesReadWritten < toWrite,
 	// it usually means the SD card is physically full.
 	if (fp->lastResult == FR_OK && fp->bytesReadWritten < toWrite) {
-		fp->lastResult = FR_DENIED; // todo denied or Full. todo confirm error
+		fp->lastResult = FR_DENIED;
+		// todo denied or Full. todo confirm error?
 	}
 
 	return fp->lastResult;
@@ -232,14 +215,14 @@ void FileCloseAll(void)
 }
 
 //-----------------------------------------------------------------------------
-BYTE isFileEOF(file* fp)
+BYTE isFileEOF(TFILE* fp)
 {
 	if (fp == NULL) return TRUE;
 	return f_eof(&fp->f);
 }
 
 //-----------------------------------------------------------------------------
-int FileReadLine(file* fp, char szLine[], int nMaxLen)
+int FileReadLine(TFILE* fp, char szLine[], int nMaxLen)
 {
 	char* psz;
 	int   nLen = 0;

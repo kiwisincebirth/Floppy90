@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <hardware/vreg.h>
+
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/gpio.h"
@@ -195,6 +197,21 @@ void __not_in_flash_func(ServiceBackendStateMachines)(void) {
 ///////////////////////////////////////////////////////////////////////////////
 int main()
 {
+
+	// !!!!! Completely Experimental !!!!!!!!!!!
+	// !!!!! Completely Experimental !!!!!!!!!!!
+	// !!!!! Completely Experimental !!!!!!!!!!!
+
+	// vreg_set_voltage(VREG_VOLTAGE_1_05); // Max of 260Mhz
+	vreg_set_voltage(VREG_VOLTAGE_1_10); // Max of 300Mhz
+	// vreg_set_voltage(VREG_VOLTAGE_1_15); // Max of 330Mhz
+	// set_sys_clock_khz(240000,true);
+	// set_sys_clock_khz(250000,true);
+	set_sys_clock_khz(260000,true);
+	// set_sys_clock_khz(270000,true);
+	// set_sys_clock_khz(280000,true);
+	// Below 300 Mhz if running Flash
+
     stdio_init_all();
 
     InitGlobalVars();	// general, RTC / Reset State

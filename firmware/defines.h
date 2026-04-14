@@ -5,9 +5,9 @@
 //#define ENABLE_DOUBLER 1
 //#define ENABLE_LOGGING 1
 
-#define VERSION_MAJOR 2
-#define VERSION_MINOR 0
-#define VERSION_STRING "0.2.0alpha"
+#define VERSION_MAJOR 0
+#define VERSION_MINOR 3
+#define VERSION_STRING "0.3.0 (alpha)"
 
 //#pragma GCC optimize ("O0")
 #pragma GCC optimize ("O3")

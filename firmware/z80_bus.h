@@ -30,7 +30,8 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define NopDelay() __nop(); __nop(); __nop(); __nop(); __nop(); __nop();
+#define NopDelay() __nop(); __nop(); __nop();  __nop(); __nop();
+// #define NopDelay() __nop(); __nop(); __nop(); __nop(); __nop(); __nop();
 
 //-----------------------------------------------------------------------------
 inline static byte FinishWriteOperation()
@@ -65,7 +66,7 @@ inline static void FinishReadOperation(byte data)
 
     NopDelay(); // propagation delay ?
 
-    clr_gpio(WAIT_PIN); // remove any waits
+    // clr_gpio(WAIT_PIN); // remove any waits
 }
 
 #endif //FLOPPY90_Z80_BUS_H
