@@ -20,6 +20,7 @@ extern "C" {
 		BYTE    fileId;			// unique identifier (array Index)
 		BYTE    byIsOpen;		// is it open / in use.
 		BYTE	lrl;			// Logical Record Length (1-255) 0=256
+		WORD	bufferAddress;	// Z80 Buffer address, kept for reference.
 		UINT    bytesReadWritten;  // during last read/write
 		BYTE	lastResult;		// last error during normal IO.
 		BYTE    driveId;		// drive number 0-9, default is 0
@@ -65,6 +66,9 @@ extern "C" {
 	FRESULT  FileRead (TFILE* fp, BYTE* pby, uint32_t nSize);
 	int      FileReadLine(TFILE* fp, char szLine[], int nMaxLen);
 	FRESULT  FileClose(TFILE* fp);
+
+	uint32_t FileGetSize(TFILE* fp);
+	uint32_t FileGetPos(TFILE* fp);
 
 	// Not currently Used
 	//void     FileSeek(file* fp, int nOffset);

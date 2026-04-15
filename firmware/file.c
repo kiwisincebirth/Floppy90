@@ -3,7 +3,6 @@
 
 #include <ctype.h>
 
-#include "system.h"
 #include "string.h"
 #include <util.h>
 
@@ -16,7 +15,7 @@ static TFILE    g_fFiles[MAX_FILES];
 void FileSystemInit(void)
 {
 	for (int i = 0; i < MAX_FILES; ++i) {
-		g_fFiles[i].fileId = i + 42; // unique identifier
+		g_fFiles[i].fileId = i + 42; // unique non-zero identifier
 		g_fFiles[i].byIsOpen = false;
 	}
 }
@@ -73,7 +72,7 @@ TFILE* findUnusedFile()
 		TFILE *fInfo = &g_fFiles[i];
 
 		if ( ! fInfo->byIsOpen ) {
-			memset(fInfo->fname, 0, sizeof(fInfo->fname));
+			fInfo->fname[0] = '\0'; // Instant string "clear"
 			fInfo->lastResult = FR_OK;
 			fInfo->bytesReadWritten = 0;
 			fInfo->lrl = 0;
@@ -91,15 +90,31 @@ TFILE* findOpenFile( BYTE fileId )
 {
 	if (sd_byCardInialized == 0) return NULL;
 
-	for (int i = 0; i < MAX_FILES; i++) {
-		TFILE *fInfo = &g_fFiles[i];
+	// Ensure the ID is within the valid range before doing math
+	if (fileId < 42 || fileId >= (42 + MAX_FILES)) {
+		return NULL;
+	}
 
-		if ( fInfo->fileId == fileId && fInfo->byIsOpen ) {
-			return fInfo;
-		}
+	TFILE *fInfo = &g_fFiles[ fileId - 42 ];
+	if ( fInfo->fileId == fileId && fInfo->byIsOpen ) {
+		return fInfo;
 	}
 	return NULL;
 }
+
+// TFILE* findOpenFile( BYTE fileId )
+// {
+// 	if (sd_byCardInialized == 0) return NULL;
+//
+// 	for (int i = 0; i < MAX_FILES; i++) {
+// 		TFILE *fInfo = &g_fFiles[i];
+//
+// 		if ( fInfo->fileId == fileId && fInfo->byIsOpen ) {
+// 			return fInfo;
+// 		}
+// 	}
+// 	return NULL;
+// }
 
 //-----------------------------------------------------------------------------
 
@@ -137,7 +152,7 @@ FRESULT FileClose(TFILE* fp)
 	// we still want to reclaim the memory slot.
 	fp->lastResult = trans(f_close(&fp->f) );
 
-	// 3. State Reset
+	// 3. State Reset - effectively returns it for reuse
 	fp->byIsOpen = FALSE;
 	// Note: We keep the fname in memory; it's useful for
 	// "Last File Accessed" or "Reopen" features.
@@ -207,6 +222,7 @@ FRESULT FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize)
 // }
 
 //-----------------------------------------------------------------------------
+// todo investigate this and ensure called at system RESET
 void FileCloseAll(void)
 {
 	for (int i = 0; i < MAX_FILES; ++i) {
@@ -219,6 +235,16 @@ BYTE isFileEOF(TFILE* fp)
 {
 	if (fp == NULL) return TRUE;
 	return f_eof(&fp->f);
+}
+
+uint32_t FileGetSize(TFILE* fp) {
+	if (!fp || !fp->byIsOpen) return 0;
+	return (uint32_t)f_size(&fp->f);
+}
+
+uint32_t FileGetPos(TFILE* fp) {
+	if (!fp || !fp->byIsOpen) return 0;
+	return (uint32_t)f_tell(&fp->f);
 }
 
 //-----------------------------------------------------------------------------

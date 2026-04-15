@@ -123,7 +123,7 @@ uint8_t __not_in_flash_func(CMD_VER)(uint8_t step) {
 // ====================================================================
 
 // Stateful Open File - Legacy (single) File Object
-static volatile TFILE* state_openFile;
+static TFILE* state_openFile;
 
 /*
  * Open file
@@ -164,7 +164,7 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 			fhd_error2 = state_openFile->lastResult;
 			if ( state_openFile->byIsOpen ) {
 
-				FSIZE_t size = f_size(&state_openFile->f);
+				FSIZE_t size = FileGetSize(state_openFile);
 				printf("\r\nopenFile(%s,%llu) ",cleanPath,size);
 
 				fhd_size2 = sizeof (DWORD); // file size as 4 bytes
@@ -175,10 +175,8 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 
 		} else {
 			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
-		fhd_size2 = 0;
 		return STATUS_ERROR; // not opened
 	}
 	return STATUS_OK;
@@ -324,7 +322,6 @@ uint8_t __not_in_flash_func(CMD_OPENDIR)(uint8_t step) {
 		printf("\r\nopenDir() ");
 		fhd_error2 = DirOpen(&state_dir, (void *)&fhd_data2[0]);
 		if (fhd_error2 != FR_OK) {
-			fhd_size2 = 0;
 			state_dir_open = 0;
 			return STATUS_ERROR;
 		} else {
@@ -447,6 +444,7 @@ uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
 		if (dir_findfirst) {
 
 			if (dir_open) { // if dir is open
+				// todo tis should be replaced with method in File.h
 				f_closedir(&dir); // ensure dir is closed
 				dir_open = 0;
 			}
@@ -480,6 +478,7 @@ uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
 				// End of directory or Error
 				fhd_size2 = 0; // TELL THE Z80 THERE IS NOTHING TO READ
 				if (dir_open) { // if dir is open
+					// todo tis should be replaced with method in File.h
 					f_closedir(&dir); // ensure dir is closed
 					dir_open = 0;
 				}
@@ -676,7 +675,6 @@ uint8_t __not_in_flash_func(CMD_PWD)(uint8_t step)
 		fhd_error2 = CurrentDirectory((char *)fhd_data2, sizeof(fhd_data2));
 
 		if (fhd_error2 != FR_OK) {
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
 
@@ -720,17 +718,17 @@ typedef struct {
 	BYTE    byMode;			/* Open Mode - Defined by FF */
 	BYTE    lrl;			/* Logical Record Length 256=0 */
 	WORD	buffaddr;		/* address of in memory buffer */
-	TCHAR	fcb[32];		/* FCB containing filename */
+	TCHAR	filename[32];	/* FCB containing filename */
 } OPEN_REQUEST;
 #pragma pack(pop)
 
-void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, TFILE* f) {
-	// 1. Extract LRL
-	f->lrl = req->lrl;
-
-	// 2. Use the core processor
-	sanitizeTrs80Path((char*)req->fcb, f->fname, &f->driveId, 32);
-}
+// void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, TFILE* f) {
+// 	// 1. Extract LRL
+// 	f->lrl = req->lrl;
+//
+// 	// 2. Use the core processor
+// 	sanitizeTrs80Path((char*)req->fcb, f->fname, &f->driveId, 32);
+// }
 
 /**
 ;  The 32 byte FCB block sent back to Z80
@@ -771,8 +769,13 @@ typedef struct {
 } FCB;
 #pragma pack(pop)
 
-void FileToFCB(TFILE* fp, FCB* fcb, OPEN_REQUEST* req) {
-	if (!fp || !fcb || !req) return;
+/**
+ * Used to populate an FCB from an open File
+ * @param fp
+ * @param fcb
+ */
+void FileToFCB(TFILE* fp, FCB* fcb) {
+	if (!fp || !fcb ) return;
 
 	// Init structure: Zero out, then set the $FF trailer
 	memset(fcb, 0, sizeof(FCB));
@@ -787,44 +790,28 @@ void FileToFCB(TFILE* fp, FCB* fcb, OPEN_REQUEST* req) {
 	// Bit 5 = 1 (Z80 sector buffer is not populated)
 	fcb->byte2 |= 0x20;
 
-	// 4. Map data from the OPEN_REQUEST
-	fcb->buffaddr = req->buffaddr;
-	fcb->lrl      = req->lrl;
+	// other data
+	fcb->buffaddr = fp->bufferAddress;
+	fcb->lrl      = fp->lrl;
 
 	// 5. System Identifiers for mapping back to RP2350 objects
 	fcb->driveId  = fp->driveId;
 	fcb->fileId   = fp->fileId;
 
 	// Extract Next Pointer (24-bit)
-	uint32_t nextPos = (uint32_t)f_tell(&fp->f);
+	uint32_t nextPos = FileGetPos(fp);
 	fcb->nextLSB = (BYTE)(nextPos & 0xFF);
 	fcb->nextMOB = (BYTE)((nextPos >> 8) & 0xFF);
 	fcb->nextMSB = (BYTE)((nextPos >> 16) & 0xFF);
 
 	// Extract EOF/Size (24-bit)
-	uint32_t fileSize = (uint32_t)f_size(&fp->f);
+	uint32_t fileSize = FileGetSize(fp);
 	fcb->eofLSB = (BYTE)(fileSize & 0xFF);
 	fcb->eofMOB = (BYTE)((fileSize >> 8) & 0xFF);
 	fcb->eofMSB = (BYTE)((fileSize >> 16) & 0xFF);
 
 	// Trailing Data
 	memset(fcb->trailer, 0xFF, sizeof(fcb->trailer));
-}
-
-void FileToUpdateFCB(TFILE* fp, FCB* fcb) {
-	if (!fp || !fcb) return;
-
-	// Extract Next Pointer (24-bit)
-	uint32_t nextPos = (uint32_t)f_tell(&fp->f);
-	fcb->nextLSB = (BYTE)(nextPos & 0xFF);
-	fcb->nextMOB = (BYTE)((nextPos >> 8) & 0xFF);
-	fcb->nextMSB = (BYTE)((nextPos >> 16) & 0xFF);
-
-	// Extract EOF/Size (24-bit)
-	uint32_t fileSize = (uint32_t)f_size(&fp->f);
-	fcb->eofLSB = (BYTE)(fileSize & 0xFF);
-	fcb->eofMOB = (BYTE)((fileSize >> 8) & 0xFF);
-	fcb->eofMSB = (BYTE)((fileSize >> 16) & 0xFF);
 }
 
 // ====================================================================
@@ -862,26 +849,31 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 		uint8_t driveNum;
 
 		// 1. Sanitize the string (handles /ext and :D)
-		sanitizeTrs80Path((char*)openRequest->fcb, cleanName, &driveNum, 32);
+		sanitizeTrs80Path((char*)openRequest->filename, cleanName, &driveNum, 32);
 
 		// the main open command
 		TFILE *file = FileOpenByName(cleanName, openRequest->byMode);
 
 		if ( file == NULL ) {
-
 			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
-			fhd_size2 = 0;
 			return STATUS_ERROR;
+		}
 
-		} else if (fhd_error2 == FR_OK) {
+		fhd_error2 = file->lastResult;
 
-			FSIZE_t size = f_size(&state_openFile->f);
+		if (fhd_error2 == FR_OK) {
 
+			// copy data from request into the file object
+			file->lrl = openRequest->lrl;
+			file->bufferAddress = openRequest->buffaddr;
+			file->driveId = driveNum; // extracted from the filename
+
+			uint32_t size = FileGetSize(file);
 			printf("\r\nfileOpen(%s,%llu) ",file->fname,size);
 
 			// sets all infor into FCB for return
 			FCB fcbData;
-			FileToFCB(file, &fcbData, openRequest);
+			FileToFCB(file, &fcbData);
 
 			// copy FCB into Data
 			fhd_size2 = sizeof (FCB);
@@ -892,7 +884,6 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
 			return STATUS_OKDATA;
 		} else {
-			fhd_size2 = 0;
 			return STATUS_ERROR; // not opened
 		}
 	}
@@ -917,19 +908,17 @@ uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
+
+		printf("\r\nfileClose(%s) ",file->fname);
 
 		fhd_error2 = FileClose(file);
 
 		if (fhd_error2 == FR_OK) {
-
-			printf("\r\nfileCloseOpen(%s) ",file->fname);
-
-			return STATUS_OKDATA;
+			fhd_fileid = 0 ;
+			return STATUS_OK;
 		} else {
-			fhd_size2 = 0;
 			return STATUS_ERROR; // not opened
 		}
 	}
@@ -954,23 +943,18 @@ uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
 
-		fhd_error2 = FileClose(file);
-
+		FileClose(file); // just ignore any error
+		// the filename is still present.
 		fhd_error2 = FileDelete(file->fname);
 
 		if (fhd_error2 == FR_OK) {
-
-			//			printf("\r\nfileKill(%s,%llu) ",file->fname,file->size);
-
-
-			return STATUS_OKDATA;
+			printf("\r\nfileKill(%s) ",file->fname);
+			return STATUS_OK;
 		} else {
-			fhd_size2 = 0;
-			return STATUS_ERROR; // not opened
+			return STATUS_ERROR;
 		}
 	}
 	return STATUS_OK;
@@ -985,6 +969,7 @@ uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
  *      ERR : error in ERROR2 - including EOF Error, if no bytes
  *      DRQ : should be true otherwise
  * 5. TRS reads DATA2 (SIZE2 bytes) may be smaller if last page
+ * Noting the Bytes read are defined by the LRL defined at OPEN
  */
 uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 
@@ -997,7 +982,6 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
 
@@ -1016,7 +1000,6 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 
 				return STATUS_OKDATA; // got data
 			} else {
-
 				fhd_error2 = TRS_EOF_ENCOUNTERED;
 				return STATUS_ERROR;
 			}
@@ -1031,44 +1014,51 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
  * FILE -> Write
  * 1. File must have been opened by openfile()
  * 2. TRS writes COMMAND2
- * 3. TRS sends SIZE2 (if not, default is 256 bytes)
- *      * (Noting that Size2 should be SET by LRL of the FILE)
+ * 3. TRS optionally sets SIZE2 (if not, default is LRL)
  * 4  TRS sends DATA2 (SIZE2) bytes to write
- * 3. TRS waits
- * 4. TRS checks status.
- *      ERR : error in ERROR2 - including EOF Error, if no bytes
- *      DRQ : should be true otherwise
- * 5. TRS reads DATA2 (SIZE2 bytes) may be smaller if last page
+ * 5. TRS waits
+ * 6. TRS checks status.
+ *      ERR : error in ERROR2
  */
 uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 
-	// Step 1 noting to do at this point, wait for data in Step 2
+	if (step == 1) {
 
-	// todo Consider setting SIZE from File LRL
-	// fhd_size2 = file->lrl; // 8bit LRL where 256->0
+		// TODO How performant is this, it runs in Z80 (bus) thread
+		// TODO and the findOpenFile() function uses a for loop.
+		// todo in the file lookup.
+
+		// find the file object, using "fhd_fileid" set in IO Port
+		TFILE* file = findOpenFile( fhd_fileid );
+
+		if (!file) {
+			fhd_error2 = TRS_ILL_FILENUMBER;
+			return STATUS_ERROR;
+		}
+
+		// set the default size based on files LRL
+		fhd_size2 = file->lrl;
+
+		return STATUS_OK;
+	}
 
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
 
 	if (step == 10) {
 
-		// using "fhd_fileid" passed in IO Port
-
-		// find the file object
+		// find the file object, using "fhd_fileid" passed in IO Port
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
 
-		// todo consider not returning the Full Updated FCB
-		uint16_t expectedWrite = file->lrl == 0 ? 256 : file->lrl;
+		uint16_t expectedWrite = fhd_size2 == 0 ? 256 : fhd_size2;
 
-		// actually read the data into the target data array starting at
-		// Note the Data is read into buffer starting at 16th byte
-		fhd_error2 = FileWrite((void *)file, (void *)&fhd_data2, file->lrl);
+		// actually write the data from the Z80 DATA buffer TO the file
+		fhd_error2 = FileWrite((void *)file, (void *)&fhd_data2, expectedWrite);
 
 		if (fhd_error2 == FR_OK) {
 
@@ -1076,11 +1066,9 @@ uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 
 			if (actualWrite == expectedWrite) {
 				printf("+");
-
-				return STATUS_OKDATA; // got data
+				return STATUS_OK; // Write success
 			} else {
-
-				fhd_error2 = TRS_EOF_ENCOUNTERED;
+				fhd_error2 = TRS_UNKNOWN_ERROR; // todo Map to Better Error
 				return STATUS_ERROR;
 			}
 		} else {
@@ -1111,27 +1099,20 @@ uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
-			fhd_size2 = 0;
 			return STATUS_ERROR;
 		}
 
-		// todo
+		printf("FCB()");
 
+		// sets all infor into FCB for return
+		FCB fcbData;
+		FileToFCB(file, &fcbData);
 
-		if (fhd_error2 == FR_OK) {
+		// copy a subset of FCB data into the man data buffer
+		fhd_size2 = 9; // copy 9 bytes, starting at the fifth byte
+		memcpy((void *)fhd_data2, &((uint8_t*)&fcbData)[5], fhd_size2);
 
-			printf("FCB()");
-
-			// // update he FCB data current position, eof etc
-			// FileToUpdateFCB(file, file->&fcbData);
-			//
-			// // copy the FCB DATA back into the DATA, BEFORE the read data
-			// memcpy( (void *)&fhd_data2[0], &fcbData, 16);
-
-
-		} else {
-			return STATUS_ERROR;
-		}
+		return STATUS_OKDATA;
 	}
 	return STATUS_OK;
 }
@@ -1199,7 +1180,11 @@ void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
 		fhd_status = TRS_HARD_BUSY;
 	} else {
 	    fhd_status = status_result & ~TRS_HARD_BUSY;
-    }
+		if (fhd_status == STATUS_ERROR) {
+			fhd_size2 = 0;
+		}
+	}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -1215,8 +1200,7 @@ static byte fhd_data2Index = 0;
 //-----------------------------------------------------------------------------
 void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 {
-	switch (addr)
-	{
+	switch (addr) {
 		case DATA2:
 			fhd_data2[fhd_data2Index++] = data; // store the data byte into the buffer
 			fhd_data2[fhd_data2Index  ] = 0; 	// precaution, puts a null after last byte
@@ -1227,16 +1211,11 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 			break;
 		case SIZE2:
 			fhd_size2 = data;
-
-			// since Z80 provide size, assume z80 will now write to the DATA buffer
-			fhd_data2Index = 0; // so set the pointer back to beginning of data buffer
-
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			break;
 		case COMMAND2:
 			fhd_command2 = data;
-
- 			// Issuing a command is a primary action and data buffer may come after this
-			fhd_data2Index = 0; // so set the pointer back to beginning of data buffer
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			fhd_bootMode = false; // boot mode should be disabled
 
 			// STEP 1 : After receiving the command
@@ -1244,15 +1223,17 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 
 			break;
 		case FILEID2:
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			fhd_fileid = data;
 			break;
 
-			// todo make this configurable
-		// case WRITEROM: // (OUT on ERROR2) Bootloader Initiate Command
-		// 	fhd_bootMode = true; // boot loader Mode
-		// 	fhd_bootIndex = 0; // reset the data pointer
-		// 	boot_data_block[2] = data; // byte from out command.
-		// 	break;
+		case WRITEROM: // (OUT on ERROR2) Bootloader Initiate Command
+			if (g_byEnableFreHDBoot) { // only if enabled
+				fhd_bootMode = true; // boot loader Mode
+				fhd_bootIndex = 0; // reset the data pointer
+				boot_data_block[2] = data; // byte from out command.
+			}
+		 	break;
 	}
 }
 
@@ -1271,7 +1252,7 @@ byte __not_in_flash_func(frehd_port_in)(word addr)
 			break;
 		case SIZE2:
 			// reading the Size would indicate we are about to read the BYTES
-			fhd_data2Index = 0; // so set the pointer back to beginning of data buffer
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			data = fhd_size2; // return the size2 register
 			break;
 		case READROM: // (In on COMMAND2) Bootloader Data Read
@@ -1281,12 +1262,15 @@ byte __not_in_flash_func(frehd_port_in)(word addr)
 			}
 			break;
 		case ERROR2:
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			data = fhd_error2;
 			break;
 		case STATUS:
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			data = fhd_status;
 			break;
 		case FILEID2:
+			fhd_data2Index = 0; // pointer to the beginning of data buffer
 			data = fhd_fileid;
 			break;
 	}
