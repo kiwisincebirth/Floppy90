@@ -55,23 +55,24 @@ extern "C" {
 
 	// File Methods - Obtain a File Object
 	TFILE*	 findOpenFile( BYTE fileId );
-	TFILE*   FileOpenByName(char* pszFileName, BYTE byMode);
+	TFILE*   FileOpenByName(const char* pszFileName, BYTE byMode);
 
 	// Misc Metods
 	// BYTE     FileExists(char* pszFileName);
 
 	// File Methods - OPEN Files
-	BYTE     FileIsOpen(TFILE *fp);
-	FRESULT  FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize);
+	BYTE     FileIsOpen(const TFILE *fp);
+	FRESULT  FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize);
 	FRESULT  FileRead (TFILE* fp, BYTE* pby, uint32_t nSize);
 	int      FileReadLine(TFILE* fp, char szLine[], int nMaxLen);
+	FRESULT  FileSeek(TFILE* fp, uint64_t nOffset);
 	FRESULT  FileClose(TFILE* fp);
 
 	uint32_t FileGetSize(TFILE* fp);
 	uint32_t FileGetPos(TFILE* fp);
 
+
 	// Not currently Used
-	//void     FileSeek(file* fp, int nOffset);
 	//void     FileTruncate(file* fp);
 	//void     FileFlush(file* fp);
 

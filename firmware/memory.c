@@ -81,6 +81,9 @@ void LoadFDCBootBlock(void) {
 		/* Read a chunk of data from the source file */
 		fr = f_read(&fsrc, fdc_bootblock, sizeof fdc_bootblock, &br);
 
+		// todo should check for errors
+		// and maybe disable
+
 		/* Close open files */
 		f_close(&fsrc);
 	}
@@ -221,6 +224,8 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr)
 			// 	ring_ptr = (ring_ptr + 1) & STACK_MASK;
 			// }
 			// pby = &currentPage; // RW Page control register at $37F0
+			break;
+		default:
 			break;
 	}
 

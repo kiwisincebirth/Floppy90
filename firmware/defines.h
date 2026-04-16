@@ -217,7 +217,6 @@ extern volatile uint8_t  sd_byCardInialized;
 
 // Defined By System and Z0 Bus
 extern volatile byte     g_byResetActive;
-extern volatile byte     g_byRaiseInterrupt;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 

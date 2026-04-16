@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <util.h>
 
-#define	AM_HID_SYS AM_HID + AM_SYS	/* Hidden System Files */
+#define	AM_HID_SYS (AM_HID + AM_SYS)	/* Hidden System Files */
 
 // ORIGINAL FRE HD Bootloader Block - Z80 Code.
 // Byte 0 = Confirmation Code 0xFE
@@ -684,7 +684,7 @@ uint8_t __not_in_flash_func(CMD_PWD)(uint8_t step)
 //		fhd_data2[fhd_size2] = 0x0D;
 
 		// 1. Find the current length (excluding null)
-		int len = strlen((char *)fhd_data2);
+		uint16_t len = strlen((char *)fhd_data2);
 
 		// Debug: Print the actual string
 		printf("\r\nPWD(%s) %i", (char *)&fhd_data2,len+1);
@@ -869,13 +869,13 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 			file->driveId = driveNum; // extracted from the filename
 
 			uint32_t size = FileGetSize(file);
-			printf("\r\nfileOpen(%s,%llu) ",file->fname,size);
+			printf("\r\nfileOpen(%s,%lu) ",file->fname,size);
 
 			// sets all infor into FCB for return
 			FCB fcbData;
 			FileToFCB(file, &fcbData);
 
-			// copy FCB into Data
+			// copy FCB into Data and set size to 32
 			fhd_size2 = sizeof (FCB);
 			memcpy((void *)fhd_data2, &fcbData, fhd_size2);
 
@@ -1023,11 +1023,6 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 
 	if (step == 1) {
-
-		// TODO How performant is this, it runs in Z80 (bus) thread
-		// TODO and the findOpenFile() function uses a for loop.
-		// todo in the file lookup.
-
 		// find the file object, using "fhd_fileid" set in IO Port
 		TFILE* file = findOpenFile( fhd_fileid );
 
@@ -1078,6 +1073,81 @@ uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 	return STATUS_OK;
 }
 
+/**
+ * Generic Position Handler
+ * Handles REW (SOF), POS (position), BACK, and EOF
+ */
+uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
+
+	if (step == 1) {
+		if (fhd_command2==TRS_FILE_POS) {
+			// POS Requires Z80 to send 2 byte Record Number
+			fhd_size2 = 2;
+			return STATUS_OK;
+		} else {
+			// all other commands are parameterless
+			return TRS_HARD_BUSY;
+		}
+	}
+
+	if (step == 2) {
+		if (fhd_command2==TRS_FILE_POS) {
+			return TRS_HARD_BUSY;
+		}
+	}
+
+    if (step == 10) {
+        TFILE* file = findOpenFile(fhd_fileid);
+        if (!file) {
+            fhd_error2 = TRS_ILL_FILENUMBER;
+            return STATUS_ERROR;
+        }
+
+        FSIZE_t newPos = 0;
+
+        switch (fhd_command2) {
+            case TRS_FILE_SOF:
+                newPos = 0;
+                break;
+            case TRS_FILE_POS: {
+		            // Get the Logical Record Number from the buffer
+            		uint16_t recordNum = *((uint16_t*)fhd_data2);
+            		uint32_t recordSize = (file->lrl == 0) ? 256 : file->lrl;
+            		newPos = (FSIZE_t)recordNum * recordSize;
+				}
+        		break;
+            case TRS_FILE_BACK:
+                // Calculate back one record, floor at 0
+                if (f_tell(&file->f) >= file->lrl) {
+                    newPos = f_tell(&file->f) - (file->lrl == 0 ? 256 : file->lrl);
+                } else {
+                    newPos = 0;
+                }
+                break;
+            case TRS_FILE_EOF:
+                newPos = f_size(&file->f);
+                break;
+        }
+
+        fhd_error2 = FileSeek(file, newPos);
+
+        if (fhd_error2 == FR_OK) {
+
+            // Prepare the 32-byte FCB for the Z80 to pull back
+            FCB fcbData;
+            FileToFCB(file, &fcbData);
+
+        	// copy a subset of FCB data into the man data buffer
+        	fhd_size2 = 9; // copy 9 bytes, starting at the fifth byte
+        	memcpy((void *)fhd_data2, &((uint8_t*)&fcbData)[5], fhd_size2);
+
+            return STATUS_OKDATA;
+        }
+        return STATUS_ERROR;
+    }
+    return STATUS_OK;
+}
+
 /*
  * FILE -> Read FCB
  * 1. TRS80 writes FILEID with Id for Open File
@@ -1104,7 +1174,7 @@ uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
 
 		printf("FCB()");
 
-		// sets all infor into FCB for return
+        // Prepare the 32-byte FCB for the Z80 to pull back
 		FCB fcbData;
 		FileToFCB(file, &fcbData);
 
@@ -1151,10 +1221,10 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	// Fle Handling Commands ( $20 - $2F )
 	[TRS_FILE_READ]			= CMD_FILE_READ,
 	[TRS_FILE_WRITE]		= CMD_FILE_WRITE,
-	// [TRS_FILE_SOF]
-	// [TRS_FILE_POS]
-	// [TRS_FILE_BACK]
-	// TRS_FILE_EOF
+	[TRS_FILE_SOF]			= CMD_FILE_POSITION,
+	[TRS_FILE_POS]			= CMD_FILE_POSITION,
+	[TRS_FILE_BACK]			= CMD_FILE_POSITION,
+	[TRS_FILE_EOF]			= CMD_FILE_POSITION,
 	[TRS_FILE_FCB]			= CMD_FILE_FCB
 
 };

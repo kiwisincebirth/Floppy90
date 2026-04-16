@@ -352,8 +352,9 @@ void UpdateCounters(void)
 		if ((g_dwResetCount >= 1000) && g_byMonitorReset) // 1ms
 		{
 			g_byMonitorReset = FALSE;
-			FileCloseAll();
-			FileSystemInit();
+			FileCloseAll(); // close all open files
+			//DirChange("0:/"); // change to root directory
+			// todo printf("reset detected");
 			multicore_reset_core1();
 			reset_system();
 		}

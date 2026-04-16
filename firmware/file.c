@@ -118,7 +118,7 @@ TFILE* findOpenFile( BYTE fileId )
 
 //-----------------------------------------------------------------------------
 
-TFILE* FileOpenByName(char* pszFileName, BYTE byMode)
+TFILE* FileOpenByName(const char* pszFileName, BYTE byMode)
 {
 	TFILE *fInfo = findUnusedFile();
 	if (!fInfo) return NULL; // Always check for exhaustion!
@@ -161,7 +161,7 @@ FRESULT FileClose(TFILE* fp)
 }
 
 //-----------------------------------------------------------------------------
-__inline BYTE FileIsOpen(TFILE *fp)
+__inline BYTE FileIsOpen(const TFILE *fp)
 {
 	return fp != NULL ? fp->byIsOpen : FALSE;
 }
@@ -182,7 +182,7 @@ FRESULT FileRead(TFILE* fp, BYTE* pby, uint32_t nSize)
 	return fp->lastResult;
 }
 
-FRESULT FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize)
+FRESULT FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
@@ -201,11 +201,12 @@ FRESULT FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize)
 }
 
 //-----------------------------------------------------------------------------
-// void FileSeek(file* fp, int nOffset)
-// {
-// 	if (fp == NULL) return;
-// 	fp->lastResult = f_lseek(&fp->f, nOffset);
-// }
+FRESULT FileSeek(TFILE* fp, uint64_t nOffset)
+{
+	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
+	fp->lastResult = trans( f_lseek(&fp->f, nOffset) );
+	return fp->lastResult;
+}
 
 //-----------------------------------------------------------------------------
 // void FileFlush(file* fp)
@@ -222,7 +223,6 @@ FRESULT FileWrite(TFILE* fp, BYTE* pby, uint32_t nSize)
 // }
 
 //-----------------------------------------------------------------------------
-// todo investigate this and ensure called at system RESET
 void FileCloseAll(void)
 {
 	for (int i = 0; i < MAX_FILES; ++i) {
@@ -231,7 +231,7 @@ void FileCloseAll(void)
 }
 
 //-----------------------------------------------------------------------------
-BYTE isFileEOF(TFILE* fp)
+BYTE isFileEOF(const TFILE* fp)
 {
 	if (fp == NULL) return TRUE;
 	return f_eof(&fp->f);
@@ -250,7 +250,6 @@ uint32_t FileGetPos(TFILE* fp) {
 //-----------------------------------------------------------------------------
 int FileReadLine(TFILE* fp, char szLine[], int nMaxLen)
 {
-	char* psz;
 	int   nLen = 0;
 
 	if ((fp == NULL) || (isFileEOF(fp))) return -1;
@@ -262,7 +261,7 @@ int FileReadLine(TFILE* fp, char szLine[], int nMaxLen)
 	f_gets(szLine, nMaxLen, &fp->f);						/* Get a string from the file */
 
 	// remove CR
-	psz = strchr(szLine, '\r');
+	char* psz = strchr(szLine, '\r');
 
 	if (psz != NULL) {
 		*psz = 0;

@@ -189,7 +189,7 @@ void __not_in_flash_func(ServiceBackendStateMachines)(void) {
 		if ( ! g_byResetActive) {
 			// When Not In Reset
 			ServiceFreHdStateMachine();
-			UpdateCounters();
+			UpdateCounters(); // todo ? move this code above the if
 		}
 	}
 }

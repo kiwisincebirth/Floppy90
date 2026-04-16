@@ -5,10 +5,8 @@
 #include <hardware/clocks.h>
 
 #include "tusb.h"
-#include "stdio.h"
 #include "defines.h"
 #include "system.h"
-#include "file.h"
 #include "sd_core.h"
 #include "tests.h"
 #include "hardware/watchdog.h"
@@ -84,7 +82,6 @@ void FdcProcessStatusRequest(byte print)
 {
 	char szBuf[64];
 	char szLineEnd[4];
-	int  i;
 
 	if (print) {
 		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r\n");
@@ -135,14 +132,12 @@ void ListFiles(char* pszFilter)
 {
 	DIR     dj;			// Directory object
 	FILINFO fno;		// File information
-	FILINFO_API api_fno;
-    FRESULT fr;  		// Return value
     int nCol = 0;
 
     memset(&dj, 0, sizeof(dj));
     memset(&fno, 0, sizeof(fno));
 
-    fr = f_findfirst(&dj, &fno, "0:", "*");
+    FRESULT fr = f_findfirst(&dj, &fno, "0:", "*");
 
 	while ((fr == FR_OK) && (fno.fname[0] != 0))
 	{
@@ -160,13 +155,10 @@ void ListFiles(char* pszFilter)
 			{
                 ++nCol;
 
-    			if (nCol < DIR_COLUMNS)
-				{
-                    printf("%30s %9d", fno.fname, fno.fsize);
-                }
-                else
-                {
-                    printf("%30s %9d\r\n", fno.fname, fno.fsize);
+    			if (nCol < DIR_COLUMNS) {
+                    printf("%30s %llu", fno.fname, fno.fsize);
+                } else {
+                    printf("%30s %llu\r\n", fno.fname, fno.fsize);
                     nCol = 0;
                 }
             }
@@ -214,10 +206,6 @@ void ProcessCommand(char* psz)
 
 void ServiceCli(void)
 {
-    uint64_t nTimeNow;
-    char*    prompt = {"\nCMD>"};
-    int      c;
-
     if (!tud_cdc_connected())
     {
         g_bCdcConnected = false;
@@ -236,7 +224,7 @@ void ServiceCli(void)
 
     if (g_bCdcPromptSent == false)
     {
-        nTimeNow = time_us_64();
+        uint64_t nTimeNow = time_us_64();
         g_nCdcConnectDuration += (g_nCdcPrevTime - nTimeNow);
         g_nCdcPrevTime = nTimeNow;
 
@@ -249,7 +237,7 @@ void ServiceCli(void)
         g_bCdcPromptSent = true;
     }
 
-    c = getchar_timeout_us(0);
+    int c = getchar_timeout_us(0);
 
     if (c == PICO_ERROR_TIMEOUT) // no new characters
     {
@@ -282,12 +270,9 @@ void ServiceCli(void)
     }
     else if (g_nCommandLineIndex < sizeof(g_szCommandLine)-2)
     {
-        if ((c != '\n') && (c != '\r'))
-        {
-            printf("%c", c);
-            g_szCommandLine[g_nCommandLineIndex] = c;
-            ++g_nCommandLineIndex;
-            g_szCommandLine[g_nCommandLineIndex] = 0;
-        }
+        printf("%c", c);
+        g_szCommandLine[g_nCommandLineIndex] = c;
+        ++g_nCommandLineIndex;
+        g_szCommandLine[g_nCommandLineIndex] = 0;
     }
 }
