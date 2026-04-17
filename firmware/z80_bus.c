@@ -91,7 +91,7 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 			if ( (addr >= 0xC0) && (addr < 0xD0) ) {
 
 				// IO address in range so servicing Request
-				// if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
+				if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
 				if (!(bus & 0x01)) { // low on iORQ IN
 					FinishReadOperation(frehd_port_in(addr));

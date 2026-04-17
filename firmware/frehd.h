@@ -86,13 +86,22 @@
 //
 #define MAX_COMMANDS            0x27
 
+//			Bit 7: Drive Busy
+//			Bit 6: Drive Ready
+//			Bit 5: // Write Fault
+//			Bit 4: // Seek Complete
+//			Bit 3: Signal Data Ready
+//			Bit 2: Signal Empty File, Zero Length
+//			Bit 1: // Command in Progress
+//			Bit 0: Error Exists
+
 // Fre HD Status Codes
 #define TRS_HARD_BUSY     		0x80
 #define TRS_HARD_READY    		0x40
 #define TRS_HARD_WRERR    		0x20
 #define TRS_HARD_SEEKDONE 		0x10
 #define TRS_HARD_DRQ	  		0x08
-#define TRS_HARD_ECC	  		0x04
+#define TRS_HARD_ZERO	  		0x04
 #define TRS_HARD_CIP	  		0x02
 #define TRS_HARD_ERR	  		0x01
 

@@ -59,7 +59,7 @@ BYTE resultTranslation[] = {
 };
 
 BYTE __inline trans(FRESULT result) {
-	return result <= 19 ? resultTranslation[result] : result;
+	return result < 20 ? resultTranslation[result] : result;
 }
 
 //------------------------------------------------------------------------------
@@ -81,6 +81,14 @@ TFILE* findUnusedFile()
 		}
 	}
 	return NULL;
+}
+
+uint8_t  FileOpenCount(void) {
+	uint8_t count = 0;
+	for (int i = 0; i < MAX_FILES; i++) {
+		if (g_fFiles[i].byIsOpen) count++;
+	}
+	return count;
 }
 
 /**

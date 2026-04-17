@@ -171,13 +171,13 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 				memcpy((void *)fhd_data2, &size, fhd_size2);
 
 				return STATUS_OKDATA;
+			} else {
+				return STATUS_ERROR; // not opened
 			}
-
 		} else {
 			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
 			return STATUS_ERROR;
 		}
-		return STATUS_ERROR; // not opened
 	}
 	return STATUS_OK;
 }
@@ -816,6 +816,47 @@ void FileToFCB(TFILE* fp, FCB* fcb) {
 
 // ====================================================================
 
+/**
+ * Dumps a memory buffer to the serial console in a formatted hex view.
+ * @param title A string title to print before the dump (e.g., "DATA2 FCB")
+ * @param buf   Pointer to the data
+ * @param len   Number of bytes to dump (e.g., 32)
+ */
+void debug_dump_buffer(const char* title, const uint8_t* buf, size_t len) {
+	printf("\r\n--- %s (%zu bytes) ---\n", title, len);
+	// printf("Offset  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  ASCII\n");
+	// printf("------------------------------------------------------------------\n");
+
+	for (size_t i = 0; i < len; i += 16) {
+		// Print the offset
+		printf("%04X    ", (unsigned int)i);
+
+		// Print Hex values
+		for (size_t j = 0; j < 16; j++) {
+			if (i + j < len) {
+				printf("%02X ", buf[i + j]);
+			} else {
+				printf("   "); // Padding for partial rows
+			}
+			if (j == 7) printf(" "); // Visual split at 8 bytes
+		}
+
+		printf(" ");
+
+		// Print ASCII values
+		for (size_t j = 0; j < 16; j++) {
+			if (i + j < len) {
+				uint8_t c = buf[i + j];
+				// Check if character is printable, else print a dot
+				printf("%c", isprint(c) ? c : '.');
+			}
+			if (j == 7) printf(" ");
+		}
+		printf("\n");
+	}
+	// printf("------------------------------------------------------------------\n");
+}
+
 /*
  * FILE -> Open
  * 1. TRS writes COMMAND2, SIZE2 set to 36
@@ -841,6 +882,8 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
 	if (step == 10) {
 
+		debug_dump_buffer("Open Request", (uint8_t*)fhd_data2, 32);
+
 		// cast copy the request data into OPEN_REQUEST
 		OPEN_REQUEST* openRequest = (OPEN_REQUEST*)fhd_data2;
 
@@ -851,11 +894,14 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 		// 1. Sanitize the string (handles /ext and :D)
 		sanitizeTrs80Path((char*)openRequest->filename, cleanName, &driveNum, 32);
 
+		printf("\r\nfileOpen(%s) ",cleanName);
+
 		// the main open command
 		TFILE *file = FileOpenByName(cleanName, openRequest->byMode);
 
 		if ( file == NULL ) {
 			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
+			printf("\r\nfileKill(TooManyFiles)");
 			return STATUS_ERROR;
 		}
 
@@ -863,13 +909,12 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
 		if (fhd_error2 == FR_OK) {
 
+			printf("Size=%lu ",FileGetSize(file));
+
 			// copy data from request into the file object
 			file->lrl = openRequest->lrl;
 			file->bufferAddress = openRequest->buffaddr;
 			file->driveId = driveNum; // extracted from the filename
-
-			uint32_t size = FileGetSize(file);
-			printf("\r\nfileOpen(%s,%lu) ",file->fname,size);
 
 			// sets all infor into FCB for return
 			FCB fcbData;
@@ -879,10 +924,18 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 			fhd_size2 = sizeof (FCB);
 			memcpy((void *)fhd_data2, &fcbData, fhd_size2);
 
+			debug_dump_buffer("Open Response", (uint8_t*)fhd_data2, 32);
+
 			// and set the current File Id reg
 			fhd_fileid = file->fileId; // Set File ID into Register
 
-			return STATUS_OKDATA;
+			// Check if file is brand new (0 bytes)
+			if (FileGetSize(file) == 0) {
+				// Set a bit in our Status register (e.g., Bit 1)
+				return STATUS_OKDATA | TRS_HARD_ZERO;
+			} else {
+				return STATUS_OKDATA;
+			}
 		} else {
 			return STATUS_ERROR; // not opened
 		}
@@ -903,11 +956,14 @@ uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
 
 	if (step == 10) {
 
+		printf("\r\nfileClose(%d)",fhd_fileid);
+
 		// find the file object
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfile(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
@@ -917,6 +973,9 @@ uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
 
 		if (fhd_error2 == FR_OK) {
 			fhd_fileid = 0 ;
+
+
+
 			return STATUS_OK;
 		} else {
 			return STATUS_ERROR; // not opened
@@ -938,20 +997,27 @@ uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
 
 	if (step == 10) {
 
+		printf("\r\nfileKill(%d)",fhd_fileid);
+
 		// find the file object
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfileKill(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
+		printf("\r\nfileClose(%s) ",file->fname);
+
 		FileClose(file); // just ignore any error
+
+		printf("& Kill ");
+
 		// the filename is still present.
 		fhd_error2 = FileDelete(file->fname);
 
 		if (fhd_error2 == FR_OK) {
-			printf("\r\nfileKill(%s) ",file->fname);
 			return STATUS_OK;
 		} else {
 			return STATUS_ERROR;
@@ -973,15 +1039,20 @@ uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
  */
 uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 
+//	printf("\r\nfR()");
+
 	if (step == 1) return TRS_HARD_BUSY;
 
 	if (step == 10) {
+
+		// printf("\r\nfileRead(%d)",fhd_fileid);
 
 		// find the file object
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfileRead(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
@@ -993,6 +1064,10 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 			uint32_t actualRead = file->bytesReadWritten;
 
 			if ( actualRead > 0 ) {
+
+				// printf("\r\nfileRead(Bytes Read=%lu)",actualRead);
+				// debug_dump_buffer("Read Data", (uint8_t*)fhd_data2, 256);
+
 				printf("-");
 
 				// set the data length
@@ -1022,12 +1097,15 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
  */
 uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 
+//	printf("\r\nfW()");
+
 	if (step == 1) {
 		// find the file object, using "fhd_fileid" set in IO Port
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfileWrite(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
@@ -1042,21 +1120,27 @@ uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 
 	if (step == 10) {
 
+		printf("\r\nWriteFile(%d)",fhd_fileid);
+
 		// find the file object, using "fhd_fileid" passed in IO Port
 		TFILE* file = findOpenFile( fhd_fileid );
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nWriteFile(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
 		uint16_t expectedWrite = fhd_size2 == 0 ? 256 : fhd_size2;
+
+		debug_dump_buffer("Write Data", (uint8_t*)fhd_data2, 256);
 
 		// actually write the data from the Z80 DATA buffer TO the file
 		fhd_error2 = FileWrite((void *)file, (void *)&fhd_data2, expectedWrite);
 
 		if (fhd_error2 == FR_OK) {
 
+			printf("\r\nfileWrite(Bytes Written=%i)",file->bytesReadWritten);
 			uint32_t actualWrite = file->bytesReadWritten;
 
 			if (actualWrite == expectedWrite) {
@@ -1097,13 +1181,17 @@ uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
 	}
 
     if (step == 10) {
-        TFILE* file = findOpenFile(fhd_fileid);
+
+		printf("\r\nfilePOS(%i)",fhd_fileid);
+
+    	TFILE* file = findOpenFile(fhd_fileid);
         if (!file) {
             fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfilePOS(Illegal FileId=%d)", fhd_fileid);
             return STATUS_ERROR;
         }
 
-        FSIZE_t newPos = 0;
+    	FSIZE_t newPos = 0;
 
         switch (fhd_command2) {
             case TRS_FILE_SOF:
@@ -1129,6 +1217,7 @@ uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
                 break;
         }
 
+    	printf("\r\nfilePOS(%s,%llu) ",file->fname,newPos);
         fhd_error2 = FileSeek(file, newPos);
 
         if (fhd_error2 == FR_OK) {
@@ -1169,10 +1258,11 @@ uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
 
 		if (!file) {
 			fhd_error2 = TRS_ILL_FILENUMBER;
+			printf("\r\nfileFCB(Illegal FileId=%d)", fhd_fileid);
 			return STATUS_ERROR;
 		}
 
-		printf("FCB()");
+		// printf("\r\nfileFCB(%s)",file->fname);
 
         // Prepare the 32-byte FCB for the Z80 to pull back
 		FCB fcbData;
@@ -1181,6 +1271,8 @@ uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
 		// copy a subset of FCB data into the man data buffer
 		fhd_size2 = 9; // copy 9 bytes, starting at the fifth byte
 		memcpy((void *)fhd_data2, &((uint8_t*)&fcbData)[5], fhd_size2);
+
+		// debug_dump_buffer("FCB Response", (uint8_t*)fhd_data2, 32);
 
 		return STATUS_OKDATA;
 	}
@@ -1233,15 +1325,22 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
 
 	// reject if out of bounds
-	if (__builtin_expect(fhd_command2 >= MAX_COMMANDS, 0)) return;
+	if (__builtin_expect(fhd_command2 >= MAX_COMMANDS, 0)) {
+    	printf("\r\nUnknown Command %i",fhd_command2);
+		return;
+	}
 
     command_func_t func = command_table[fhd_command2]; // get the command
-    if (func == NULL) return; // if NO command, then nothing to do
+    if (func == NULL) {
+    	printf("\r\nUnknown Command %i",fhd_command2);
+    	return; // if NO command, then nothing to do
+    }
 
     // Actually EXECUTE the command
     uint8_t status_result = func(step);
 
-	// Ensure all memory writes before status
+	// Ensure all memory writes before status changes as
+	// this is a handoff between processing threads
 	__DSB(); // Data Sync Barrier
 
 	// if the process Z80 Side signals BUSY then we set this State

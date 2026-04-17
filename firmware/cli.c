@@ -6,6 +6,7 @@
 
 #include "tusb.h"
 #include "defines.h"
+#include "file.h"
 #include "system.h"
 #include "sd_core.h"
 #include "tests.h"
@@ -106,7 +107,7 @@ void FdcProcessStatusRequest(byte print)
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
-    sprintf(szBuf, "EnableWaitStates = %d", g_byEnableWaitStates);
+    sprintf(szBuf, "Enable WaitStates= %d", g_byEnableWaitStates);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
@@ -123,6 +124,10 @@ void FdcProcessStatusRequest(byte print)
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
     sprintf(szBuf, "Card Mounted  = %d", sd_byCardInialized );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Files Open    = %d", FileOpenCount() );
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
 
     puts((char*)g_bFdcResponse);
