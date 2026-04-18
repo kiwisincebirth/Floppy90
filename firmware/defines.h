@@ -34,6 +34,7 @@ typedef unsigned long      	dword;
 // set to 1 to enable capture of bus activity logging to sd-card
 // #define ENABLE_TRACE_LOG 0
 
+// TODO Should really move MOST of this into the Z80 bus class
 #define INT_PIN       0
 #define WAIT_PIN      1
 #define CLK_SCLK      2

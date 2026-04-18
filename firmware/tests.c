@@ -12,8 +12,6 @@
 #include "file.h"
 
 
-// TODO Run This Code
-
 typedef struct {
 	const char* input;
 	const char* expectedPath;

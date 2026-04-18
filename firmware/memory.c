@@ -90,11 +90,11 @@ void LoadFDCBootBlock(void) {
 }
 
 // Service 32KB high RAM in address range $8000 to $FFFF
-void __not_in_flash_func(ServiceHighMemoryOperation)(word addr)
+void __not_in_flash_func(ServiceHighMemoryOperation)(word addr, const byte bIsRead)
 {
     byte* pby = &by_highmemory[addr - 0x8000];
 
-    if (!get_gpio(RD_PIN)) { // todo not ideal, should be passed in the request
+    if (bIsRead) { // todo not ideal, should be passed in the request
         FinishReadOperation(*pby);
 
     } else {
@@ -103,11 +103,11 @@ void __not_in_flash_func(ServiceHighMemoryOperation)(word addr)
 }
 
 // Extra Paged Memory in Range 0x3000 - 0x37DF
-void __not_in_flash_func(ServiceExtraMemory)(word addr)
+void __not_in_flash_func(ServiceExtraMemory)(word addr, const byte bIsRead)
 {
 	volatile byte* pby = NULL;
 	// todo not ideal, should be passed in the request
-	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation
+	// byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation
 	addr = (addr - 0x3000) & 0x07FF; // truncate address to range $0000 - $07FF
 
 	if (addr<0x400) { // springboard memory 0x000 - 0x3FF
@@ -166,12 +166,12 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr)
 }
 
 // Service Memory Control Ports in Range 0x37E0 - 0x3FFF
-void __not_in_flash_func(ServiceExtraPorts)(word addr)
+void __not_in_flash_func(ServiceExtraPorts)(word addr, const byte bIsRead)
 {
 	static byte byDataAvailable = 0x02; // 1771 FDC Status - data available
 	static byte byInterruptAvailable = 0x80; // Interuptt Timer Available
 	static byte byZero = 0x00;
-	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation // todo not ideal, should be passed in the request
+	// byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation
 	volatile byte* pby = NULL; // byte to write or read.
 
 	switch (addr) {

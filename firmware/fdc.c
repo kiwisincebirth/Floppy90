@@ -1244,7 +1244,7 @@
 //	g_dtDives[nDrive].byNumTracks          = g_dtDives[nDrive].dmk.byDmkDiskHeader[1];
 //	g_dtDives[nDrive].dmk.wTrackLength     = (g_dtDives[nDrive].dmk.byDmkDiskHeader[3] << 8) + g_dtDives[nDrive].dmk.byDmkDiskHeader[2];
 //
-//	if (g_dtDives[nDrive].dmk.wTrackLength > MAX_TRACK_SIZE) // error (TODO: handle this gracefully)
+//	if (g_dtDives[nDrive].dmk.wTrackLength > MAX_TRACK_SIZE)
 //	{
 //		g_dtDives[nDrive].dmk.wTrackLength = MAX_TRACK_SIZE - 1;
 //		return;
