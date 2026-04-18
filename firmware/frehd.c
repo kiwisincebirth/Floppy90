@@ -88,7 +88,7 @@ void FreHDInit(void)
 //-----------------------------------------------------------------------------
 
 // Command function type
-typedef uint8_t (*command_func_t)(uint8_t);
+typedef byte (*command_func_t)(byte);
 
 //
 // =================================
@@ -106,7 +106,7 @@ typedef uint8_t (*command_func_t)(uint8_t);
  * 1. TRS writes COMMAND2 + wait
  * 2. TRS reads DATA2 (up to 6 bytes)
  */
-uint8_t __not_in_flash_func(CMD_VER)(uint8_t step) {
+byte __not_in_flash_func(CMD_VER)(byte step) {
 	if (step == 1) {
 		fhd_data2[0] = VERSION_MAJOR;
 		fhd_data2[1] = VERSION_MINOR;
@@ -136,7 +136,7 @@ static TFILE* state_openFile;
  * 5. TRS checks status for error (in ERROR2 if any)
       AND the DATA2 register contains the size of the file just opened.
  */
-uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
+byte __not_in_flash_func(CMD_OPEN)(byte step) {
 
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
@@ -151,7 +151,7 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
 
 		// Sanitised
 		char cleanPath[33];
-		uint8_t driveNum;
+		byte driveNum;
 
 		// 1. Sanitize the string (handles /ext and :D)
 		sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
@@ -195,7 +195,7 @@ uint8_t __not_in_flash_func(CMD_OPEN)(uint8_t step) {
  *     !DRQ : done
  *      ERR : error in ERROR2
  */
-uint8_t __not_in_flash_func(CMD_READ)(uint8_t step) {
+byte __not_in_flash_func(CMD_READ)(byte step) {
 
 	// after getting Command - Signal Busy and defer processing.
 	if (step == 1) return TRS_HARD_BUSY;
@@ -237,7 +237,7 @@ uint8_t __not_in_flash_func(CMD_READ)(uint8_t step) {
  * 5. TRS waits
  * 6. TRS checks status
  */
- uint8_t __not_in_flash_func(CMD_WRITE)(uint8_t step) {
+ byte __not_in_flash_func(CMD_WRITE)(byte step) {
 
  	// Step 1 noting to do at this point, wait for data in Step 2
 
@@ -277,7 +277,7 @@ uint8_t __not_in_flash_func(CMD_READ)(uint8_t step) {
  * 3. TRS waits
  * 3. TRS checks status for ERR.
  */
-uint8_t __not_in_flash_func(CMD_CLOSE)(uint8_t step) {
+byte __not_in_flash_func(CMD_CLOSE)(byte step) {
 
 	if (step == 1) {
 		if ( FileIsOpen((void *)state_openFile) ) {
@@ -314,7 +314,7 @@ static byte  state_dir_open = 0;
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t __not_in_flash_func(CMD_OPENDIR)(uint8_t step) {
+byte __not_in_flash_func(CMD_OPENDIR)(byte step) {
 
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
@@ -343,7 +343,7 @@ uint8_t __not_in_flash_func(CMD_OPENDIR)(uint8_t step) {
  *                   DATA2 contains directory info data.
  *           If clear: no more entries in this directory.
  */
-uint8_t __not_in_flash_func(CMD_READDIR)(uint8_t step)
+byte __not_in_flash_func(CMD_READDIR)(byte step)
 {
 	static FILINFO fno;
 	static FILINFO_API api_fno;
@@ -402,7 +402,7 @@ uint8_t __not_in_flash_func(CMD_READDIR)(uint8_t step)
  *			If No data then exit out
  * 5. TRS Reads SIZE2 bytes. -> goes back to 3
  */
-uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
+byte __not_in_flash_func(CMD_DIR)(byte step)
 {
 	static DIR dir;
 	static byte dir_open = 0;		// is the dir open
@@ -509,7 +509,7 @@ uint8_t __not_in_flash_func(CMD_DIR)(uint8_t step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t __not_in_flash_func(CMD_CHANGEDIR)(uint8_t step)
+byte __not_in_flash_func(CMD_CHANGEDIR)(byte step)
 {
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
@@ -536,7 +536,7 @@ uint8_t __not_in_flash_func(CMD_CHANGEDIR)(uint8_t step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t __not_in_flash_func(CMD_MAKEEDIR)(uint8_t step)
+byte __not_in_flash_func(CMD_MAKEEDIR)(byte step)
 {
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
@@ -563,14 +563,14 @@ uint8_t __not_in_flash_func(CMD_MAKEEDIR)(uint8_t step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t __not_in_flash_func(CMD_DELETE)(uint8_t step)
+byte __not_in_flash_func(CMD_DELETE)(byte step)
 {
 	if (step == 2) return TRS_HARD_BUSY;
 
 	if (step == 10) {
 		char* psz = (char*)&fhd_data2[0];
 		char cleanPath[33];
-		uint8_t driveNum;
+		byte driveNum;
 		bool hadAtLeastOneError = false;
 
 		// Use strtok to split the string by spaces
@@ -614,7 +614,7 @@ uint8_t __not_in_flash_func(CMD_DELETE)(uint8_t step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-uint8_t __not_in_flash_func(CMD_RENAME)(uint8_t step)
+byte __not_in_flash_func(CMD_RENAME)(byte step)
 {
 	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
@@ -641,7 +641,7 @@ uint8_t __not_in_flash_func(CMD_RENAME)(uint8_t step)
 		// 4. Sanitize both paths
 		char cleanSrc[33];
 		char cleanDest[33];
-		uint8_t driveSrc, driveDest;
+		byte driveSrc, driveDest;
 
 		sanitizeTrs80Path(pszSrc, cleanSrc, &driveSrc, 32);
 		sanitizeTrs80Path(pszDest, cleanDest, &driveDest, 32);
@@ -669,7 +669,7 @@ uint8_t __not_in_flash_func(CMD_RENAME)(uint8_t step)
  * 4. TRS Reads SIZE2 bytes. -> displays to user
  */
 
-uint8_t __not_in_flash_func(CMD_PWD)(uint8_t step)
+byte __not_in_flash_func(CMD_PWD)(byte step)
 {
 	if (step == 1) return TRS_HARD_BUSY;
 
@@ -825,7 +825,7 @@ void FileToFCB(TFILE* fp, FCB* fcb) {
  * @param buf   Pointer to the data
  * @param len   Number of bytes to dump (e.g., 32)
  */
-void debug_dump_buffer(const char* title, const uint8_t* buf, size_t len) {
+void debug_dump_buffer(const char* title, const byte* buf, size_t len) {
 	printf("\r\n--- %s (%zu bytes) ---\n", title, len);
 	// printf("Offset  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  ASCII\n");
 	// printf("------------------------------------------------------------------\n");
@@ -849,7 +849,7 @@ void debug_dump_buffer(const char* title, const uint8_t* buf, size_t len) {
 		// Print ASCII values
 		for (size_t j = 0; j < 16; j++) {
 			if (i + j < len) {
-				uint8_t c = buf[i + j];
+				byte c = buf[i + j];
 				// Check if character is printable, else print a dot
 				printf("%c", isprint(c) ? c : '.');
 			}
@@ -874,7 +874,7 @@ void debug_dump_buffer(const char* title, const uint8_t* buf, size_t len) {
  *       bytes 0..31 : Actual FCB data
  * 6. FILEID contains the Id for Open File
  */
-uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_OPEN)(byte step) {
 
 	if (step == 1) { // SET the number of bytes upfront.
 		fhd_size2 = 32 + 4; // the fcb and 4 bytes "OPEN_REQUEST"
@@ -885,14 +885,14 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 
 	if (step == 10) {
 
-		// debug_dump_buffer("Open Request", (uint8_t*)fhd_data2, 32);
+		// debug_dump_buffer("Open Request", (byte*)fhd_data2, 32);
 
 		// cast copy the request data into OPEN_REQUEST
 		OPEN_REQUEST* openRequest = (OPEN_REQUEST*)fhd_data2;
 
 		// Sanitised
 		char cleanName[33];
-		uint8_t driveNum;
+		byte driveNum;
 
 		// 1. Sanitize the string (handles /ext and :D)
 		sanitizeTrs80Path((char*)openRequest->filename, cleanName, &driveNum, 32);
@@ -927,7 +927,7 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
 			fhd_size2 = sizeof (FCB);
 			memcpy((void *)fhd_data2, &fcbData, fhd_size2);
 
-			// debug_dump_buffer("Open Response", (uint8_t*)fhd_data2, 32);
+			// debug_dump_buffer("Open Response", (byte*)fhd_data2, 32);
 
 			// and set the current File Id reg
 			fhd_fileid = file->fileId; // Set File ID into Register
@@ -954,7 +954,7 @@ uint8_t __not_in_flash_func(CMD_FILE_OPEN)(uint8_t step) {
  * 2. TRS waits
  * 4. TRS checks status for error (in ERROR2 if any)
  */
-uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_CLOSE)(byte step) {
 
 	if (step == 1) return TRS_HARD_BUSY;
 
@@ -982,7 +982,7 @@ uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
 			memcpy((char *)fhd_data2, file->fname, 32);
 			fhd_size2 = 0x20;
 
-			// debug_dump_buffer("File Close Data", (uint8_t*)fhd_data2, 32);
+			// debug_dump_buffer("File Close Data", (byte*)fhd_data2, 32);
 
 			return STATUS_OK;
 		} else {
@@ -1000,7 +1000,7 @@ uint8_t __not_in_flash_func(CMD_FILE_CLOSE)(uint8_t step) {
  * 2. TRS waits
  * 4. TRS checks status for error (in ERROR2 if any)
  */
-uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_KILL)(byte step) {
 
 	if (step == 1) return TRS_HARD_BUSY;
 
@@ -1046,7 +1046,7 @@ uint8_t __not_in_flash_func(CMD_FILE_KILL)(uint8_t step) {
  * 5. TRS reads DATA2 (SIZE2 bytes) may be smaller if last page
  * Noting the Bytes read are defined by the LRL defined at OPEN
  */
-uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_READ)(byte step) {
 
 //	printf("\r\nfR()");
 
@@ -1075,7 +1075,7 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
 			if ( actualRead > 0 ) {
 
 				// printf("\r\nfileRead(Bytes Read=%lu)",actualRead);
-				// debug_dump_buffer("Read Data", (uint8_t*)fhd_data2, 256);
+				// debug_dump_buffer("Read Data", (byte*)fhd_data2, 256);
 
 				printf("-");
 
@@ -1104,7 +1104,7 @@ uint8_t __not_in_flash_func(CMD_FILE_READ)(uint8_t step) {
  * 6. TRS checks status.
  *      ERR : error in ERROR2
  */
-uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_WRITE)(byte step) {
 
 //	printf("\r\nfW()");
 
@@ -1141,7 +1141,7 @@ uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
 		}
 
 		uint16_t expectedWrite = fhd_size2 == 0 ? 256 : fhd_size2;
-		// debug_dump_buffer("Write Data", (uint8_t*)fhd_data2, expectedWrite);
+		// debug_dump_buffer("Write Data", (byte*)fhd_data2, expectedWrite);
 
 		// actually write the data from the Z80 DATA buffer TO the file
 		fhd_error2 = FileWrite((void *)file, (void *)&fhd_data2, expectedWrite);
@@ -1170,7 +1170,7 @@ uint8_t __not_in_flash_func(CMD_FILE_WRITE)(uint8_t step) {
  * Generic Position Handler
  * Handles REW (SOF), POS (position), BACK, and EOF
  */
-uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_POSITION)(byte step) {
 
 	if (step == 1) {
 		if (fhd_command2==TRS_FILE_POS) {
@@ -1238,7 +1238,7 @@ uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
 
         	// copy a subset of FCB data into the man data buffer
         	fhd_size2 = 9; // copy 9 bytes, starting at the fifth byte
-        	memcpy((void *)fhd_data2, &((uint8_t*)&fcbData)[5], fhd_size2);
+        	memcpy((void *)fhd_data2, &((byte*)&fcbData)[5], fhd_size2);
 
             return STATUS_OKDATA;
         } else {
@@ -1259,7 +1259,7 @@ uint8_t __not_in_flash_func(CMD_FILE_POSITION)(uint8_t step) {
  *      DRQ : should be true otherwise
  * 5. TRS reads DATA2 FCB, should be 16 bytes
  */
-uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
+byte __not_in_flash_func(CMD_FILE_FCB)(byte step) {
 
 	if (step == 1) return TRS_HARD_BUSY;
 
@@ -1282,9 +1282,9 @@ uint8_t __not_in_flash_func(CMD_FILE_FCB)(uint8_t step) {
 
 		// copy a subset of FCB data into the man data buffer
 		fhd_size2 = 9; // copy 9 bytes, starting at the fifth byte
-		memcpy((void *)fhd_data2, &((uint8_t*)&fcbData)[5], fhd_size2);
+		memcpy((void *)fhd_data2, &((byte*)&fcbData)[5], fhd_size2);
 
-		// debug_dump_buffer("FCB Response", (uint8_t*)fhd_data2, 32);
+		// debug_dump_buffer("FCB Response", (byte*)fhd_data2, 32);
 
 		return STATUS_OKDATA;
 	}
@@ -1334,7 +1334,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 };
 //-----------------------------------------------------------------------------
 
-void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
+void __not_in_flash_func(frehd_command_dispatch)(byte step) {
 
 	// reject if out of bounds
 	if (__builtin_expect(fhd_command2 >= MAX_COMMANDS, 0)) {
@@ -1349,7 +1349,7 @@ void __not_in_flash_func(frehd_command_dispatch)(uint8_t step) {
     }
 
     // Actually EXECUTE the command
-    uint8_t status_result = func(step);
+    byte status_result = func(step);
 
 	// Ensure all memory writes before status changes as
 	// this is a handoff between processing threads

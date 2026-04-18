@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "defines.h"
 #include "file.h"
 
 
@@ -77,7 +78,7 @@ void run_sanitizer_tests() {
 
     for (int i = 0; i < numTests; i++) {
         char resultPath[33];
-        uint8_t resultDrive = 0xFF;
+        byte resultDrive = 0xFF;
 
         sanitizeTrs80Path(tests[i].input, resultPath, &resultDrive, 32);
 

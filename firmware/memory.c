@@ -17,42 +17,42 @@
 // FDC BOOTBLOCK
 
 // The bootblock served by FDC at initial L2 Startup
-static uint8_t __aligned(4) fdc_bootblock[256];
+static byte __aligned(4) fdc_bootblock[256];
 
 // Poiter into BootBlock
-static uint8_t fdc_bootblockIdx = 0;
+static byte fdc_bootblockIdx = 0;
 
 // ==================================================
 // UPPER 32KB RAM
 
 // Upper 32k memory in 0x8000 to 0xFFFF
-static uint8_t __aligned(4) by_highmemory[0x8000];
+static byte __aligned(4) by_highmemory[0x8000];
 
 // ==================================================
 // PAGED VIRTUAL MEMORY
 
 // the first byte offset 0 in the springboard of each element
-static uint8_t __aligned(4) trampoline_first[256];
+static byte __aligned(4) trampoline_first[256];
 // the three bytes in offset's 1,2,3 of all springboard elements
-static uint8_t __aligned(4) trampoline_code[4] = { 0x00, 0x00, 0x34, 0xC9 };
+static byte __aligned(4) trampoline_code[4] = { 0x00, 0x00, 0x34, 0xC9 };
 
 // Paged RAM (128KB) in region 0x3400 - 0x05FF
 // 256 pages * 512 bytes = 0x20000
-static uint8_t __aligned(4) by_pagedmemory[0x20000];
+static byte __aligned(4) by_pagedmemory[0x20000];
 
 // Use volatile if currentPage is modified by both
 // the Z80 bus loop and a background USB/UI task.
-static volatile uint8_t currentPage = 0;
+static volatile byte currentPage = 0;
 
 // current page stack with 16 levels
 #define STACK_SIZE 16
 #define STACK_MASK (STACK_SIZE - 1)
-static uint8_t page_ring[STACK_SIZE];
-static uint8_t ring_ptr = 4;
+static byte page_ring[STACK_SIZE];
+static byte ring_ptr = 4;
 
 // 512 Bytes ram for 0x3600 to 0x37FF
 // Note: addresses 0x3400-0x35FF will effectively "shadow" this RAM
-static uint8_t __aligned(4) by_extramemory[0x200];
+static byte __aligned(4) by_extramemory[0x200];
 
 void MemInit(void) {
 
@@ -113,7 +113,7 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr, const byte bIsRead)
 	if (addr<0x400) { // springboard memory 0x000 - 0x3FF
 
 		byte offset = addr & 0x03; // offset in the springboard
-		uint8_t accessPage = (addr >> 2) & 0xFF; // page in springboard
+		byte accessPage = (addr >> 2) & 0xFF; // page in springboard
 
 		if (offset==0) { // fist offset byte
 

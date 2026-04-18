@@ -41,7 +41,7 @@ volatile uint32_t g_dwLedCount;
 
 static uint32_t g_dwResetTime;
 
-static uint8_t  g_byMonitorReset;
+static byte  g_byMonitorReset;
 static uint32_t g_dwResetCount;
 
 static uint64_t g_nTimeNow;

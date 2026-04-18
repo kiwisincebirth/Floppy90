@@ -88,6 +88,9 @@
 //-----------------------------------------------------------------------------
 void InitGPIO(void)
 {
+
+	// TODO Should really move MOST of this into the Z80 bus class
+
     gpio_init(INT_PIN);
     gpio_set_dir(INT_PIN, GPIO_OUT);
     gpio_set_slew_rate(INT_PIN, GPIO_SLEW_RATE_FAST);

@@ -46,7 +46,7 @@ extern "C" {
 	void copyFILEINFO(FILINFO_API *dest, const FILINFO *src);
 
 	// Utility functions
-	void sanitizeTrs80Path(const char* src, char* dest, uint8_t* driveId, int maxLen);
+	void sanitizeTrs80Path(const char* src, char* dest, BYTE* driveId, int maxLen);
 
 	// Tests
 	void run_sanitizer_tests();
@@ -56,7 +56,7 @@ extern "C" {
 	// File Methods - Obtain a File Object
 	TFILE*	 findOpenFile( BYTE fileId );
 	TFILE*   FileOpenByName(const char* pszFileName, BYTE byMode);
-	uint8_t  FileOpenCount(void);
+	BYTE     FileOpenCount(void);
 
 	// Misc Metods
 	// BYTE     FileExists(char* pszFileName);

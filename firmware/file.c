@@ -83,8 +83,8 @@ TFILE* findUnusedFile()
 	return NULL;
 }
 
-uint8_t  FileOpenCount(void) {
-	uint8_t count = 0;
+BYTE FileOpenCount(void) {
+	BYTE count = 0;
 	for (int i = 0; i < MAX_FILES; i++) {
 		if (g_fFiles[i].byIsOpen) count++;
 	}
@@ -382,7 +382,7 @@ void copyFILEINFO(FILINFO_API *dest, const FILINFO *src) {
  * @param driveId  Pointer to update with extracted drive number (0-9)
  * @param maxLen   Maximum bytes to read from src (usually 32)
  */
-void __not_in_flash_func(sanitizeTrs80Path)(const char* src, char* dest, uint8_t* driveId, int maxLen) {
+void __not_in_flash_func(sanitizeTrs80Path)(const char* src, char* dest, byte* driveId, int maxLen) {
 
 	int sIdx = 0;
     int dIdx = 0;

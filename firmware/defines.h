@@ -16,25 +16,17 @@
 
 //#define CDC_ITF     0           /* USB CDC interface no */
 
-typedef signed char        	int8_t;
-typedef unsigned char		uint8_t;
-typedef short              	int16_t;
-typedef unsigned short     	uint16_t;
-typedef long               	int32_t;
 typedef unsigned long      	uint32_t;
-typedef long long          	int64_t;
 typedef unsigned long long 	uint64_t;
 
 typedef unsigned char		byte;
 typedef unsigned short     	word;
-typedef unsigned long      	dword;
 
 #define SizeOfArray(x) (sizeof(x) / sizeof(x[0]))
 
 // set to 1 to enable capture of bus activity logging to sd-card
 // #define ENABLE_TRACE_LOG 0
 
-// TODO Should really move MOST of this into the Z80 bus class
 #define INT_PIN       0
 #define WAIT_PIN      1
 #define CLK_SCLK      2
@@ -214,7 +206,7 @@ extern volatile byte	g_byRaiseInterrupt;
 extern volatile byte	g_byRtcIntrActive;
 
 // Defined by SD Core
-extern volatile uint8_t  sd_byCardInialized;
+extern volatile byte  sd_byCardInialized;
 
 // Defined By System and Z0 Bus
 extern volatile byte     g_byResetActive;
