@@ -106,7 +106,8 @@ void __not_in_flash_func(ServiceHighMemoryOperation)(word addr)
 void __not_in_flash_func(ServiceExtraMemory)(word addr)
 {
 	volatile byte* pby = NULL;
-	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation // todo not ideal, should be passed in the request
+	// todo not ideal, should be passed in the request
+	byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation
 	addr = (addr - 0x3000) & 0x07FF; // truncate address to range $0000 - $07FF
 
 	if (addr<0x400) { // springboard memory 0x000 - 0x3FF
