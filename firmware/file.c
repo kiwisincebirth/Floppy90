@@ -126,7 +126,7 @@ TFILE* findOpenFile( BYTE fileId )
 
 //-----------------------------------------------------------------------------
 
-TFILE* FileOpenByName(const char* pszFileName, BYTE byMode)
+TFILE* FileOpenByName(const char* pszFileName, BYTE driveNum, BYTE byMode)
 {
 	TFILE *fInfo = findUnusedFile();
 	if (!fInfo) return NULL; // Always check for exhaustion!

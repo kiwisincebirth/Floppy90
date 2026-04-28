@@ -157,7 +157,7 @@ byte __not_in_flash_func(CMD_OPEN)(byte step) {
 		sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
 
 		// 2. Open it (relative to CWD)
-		state_openFile = FileOpenByName(cleanPath, byMode);
+		state_openFile = FileOpenByName(cleanPath, driveNum, byMode);
 
 		if ( state_openFile ) {
 
@@ -458,7 +458,9 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
 		}
 
 		// ensure the entry is a valid item
-		while ( fhd_error2==FR_OK && ( fno.fattrib&AM_HID_SYS || fno.fname[0]=='.' ) ) {
+		while ( fhd_error2==FR_OK && fno.fname[0]!=0 &&
+			( fno.fattrib&AM_HID_SYS || fno.fname[0]=='.' ) )
+		{
 			// continue scanning the next file if the file found is hidden/system
 			fhd_error2 = DirFindNext(&dir, &fno);
 
@@ -900,7 +902,7 @@ byte __not_in_flash_func(CMD_FILE_OPEN)(byte step) {
 		printf("\r\nfileOpen(%s) ",cleanName);
 
 		// the main open command
-		TFILE *file = FileOpenByName(cleanName, openRequest->byMode);
+		TFILE *file = FileOpenByName(cleanName, driveNum, openRequest->byMode);
 
 		if ( file == NULL ) {
 			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
@@ -1200,37 +1202,42 @@ byte __not_in_flash_func(CMD_FILE_POSITION)(byte step) {
             return STATUS_ERROR;
         }
 
-    	FSIZE_t newPos = 0;
+    	uint64_t position = 0;
 
         switch (fhd_command2) {
             case TRS_FILE_SOF:
-                newPos = 0;
+                position = 0;
                 break;
             case TRS_FILE_POS: {
 		            // Get the Logical Record Number from the buffer
             		uint16_t recordNum = *((uint16_t*)fhd_data2);
             		uint32_t recordSize = (file->lrl == 0) ? 256 : file->lrl;
-            		newPos = (FSIZE_t)recordNum * recordSize;
+            		position = (FSIZE_t)recordNum * recordSize;
 				}
         		break;
             case TRS_FILE_BACK:
                 // Calculate back one record, floor at 0
-                if (f_tell(&file->f) >= file->lrl) {
-                    newPos = f_tell(&file->f) - (file->lrl == 0 ? 256 : file->lrl);
+        		uint64_t current = f_tell(&file->f);
+        		const uint16_t lrl16 = file->lrl == 0 ? 256 : file->lrl;
+                if (current > lrl16) {
+                    position = current - lrl16;
                 } else {
-                    newPos = 0;
+                    position = 0;
                 }
                 break;
             case TRS_FILE_EOF:
-                newPos = f_size(&file->f);
+                position = f_size(&file->f);
                 break;
+        	default:
+        		position = f_tell(&file->f); // default to current POS
+        		break;
         }
 
-        fhd_error2 = FileSeek(file, newPos);
+        fhd_error2 = FileSeek(file, position);
 
         if (fhd_error2 == FR_OK) {
 
-	    	printf("Pos=%llu ",newPos);
+	    	printf("Pos=%llu ",position);
 
             // Prepare the 32-byte FCB for the Z80 to pull back
             FCB fcbData;

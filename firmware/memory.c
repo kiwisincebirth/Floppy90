@@ -192,7 +192,7 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr, const byte bIsRead)
 		case 0x37EC: // FDC Command Status Register
 			if (g_byEnableFDCBoot) {
 				if (bIsRead) {
-					// return an 0x01 constant.
+					// return an 0x02 constant.
 					pby = &byDataAvailable;
 				} else {
 					// writing CMD -> reset the pointer to boot block

@@ -55,7 +55,7 @@ extern "C" {
 
 	// File Methods - Obtain a File Object
 	TFILE*	 findOpenFile( BYTE fileId );
-	TFILE*   FileOpenByName(const char* pszFileName, BYTE byMode);
+	TFILE*   FileOpenByName(const char* pszFileName, BYTE driveNum, BYTE byMode);
 	BYTE     FileOpenCount(void);
 
 	// Misc Metods

@@ -405,7 +405,7 @@ void SysInit(void)
 	char* psz;
 
 	// read the default ini file to load on init
-	TFILE* f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
+	TFILE* f = FileOpenByName("/SYS/hardware.cfg", driveNum,FA_READ);
 
 	if (f == NULL) return;
 
