@@ -6,7 +6,7 @@
 #include <hardware/structs/sio.h>
 
 #include "defines.h"
-#include "frehd.h"
+#include "ports.h"
 #include "memory.h"
 #include "z80_bus.h"
 
@@ -180,12 +180,12 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 				//if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
 				if (!(bus & 0x01)) { // low on iORQ IN
-					FinishReadOperation(frehd_port_in(addr));
+					FinishReadOperation(control_port_in(addr));
 
 				} else if (!(bus & 0x08)) { // low on iORQ OUT
 
 					set_gpio(WAIT_PIN);
-					frehd_port_out(addr, FinishWriteOperation());
+					control_port_out(addr, FinishWriteOperation());
 				}
 			}
 		}

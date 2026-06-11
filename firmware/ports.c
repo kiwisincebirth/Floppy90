@@ -10,7 +10,7 @@
 #include "defines.h"
 #include "file.h"
 
-#include "frehd.h"
+#include "ports.h"
 
 #include <stdint.h>
 #include <util.h>
@@ -82,7 +82,7 @@ static volatile byte  fhd_error2 = FR_OK;
 
 //-----------------------------------------------------------------------------
 
-void FreHDInit(void)
+void PortsInit(void)
 {
 }
 //-----------------------------------------------------------------------------
@@ -1341,7 +1341,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 };
 //-----------------------------------------------------------------------------
 
-void __not_in_flash_func(frehd_command_dispatch)(byte step) {
+void __not_in_flash_func(command_dispatch)(byte step) {
 
 	// reject if out of bounds
 	if (__builtin_expect(fhd_command2 >= MAX_COMMANDS, 0)) {
@@ -1386,7 +1386,7 @@ static int	 fhd_bootIndex = 0;
 static byte  fhd_data2Index = 0;
 
 //-----------------------------------------------------------------------------
-void __not_in_flash_func(frehd_port_out)(word addr, byte data)
+void __not_in_flash_func(control_port_out)(word addr, byte data)
 {
 	switch (addr) {
 		case DATA2:
@@ -1394,7 +1394,7 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 			// fhd_data2[fhd_data2Index  ] = 0; 	// precaution, puts a null after last byte
 			// printf(" %d",fhd_data2Index);
 			// STEP 2 : When all (size2) bytes have been received dispatch
-			if (fhd_data2Index==fhd_size2) frehd_command_dispatch(2);
+			if (fhd_data2Index==fhd_size2) command_dispatch(2);
 
 			break;
 		case SIZE2:
@@ -1407,7 +1407,7 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 			fhd_bootMode = false; // boot mode should be disabled
 
 			// STEP 1 : After receiving the command
-			frehd_command_dispatch(1);
+			command_dispatch(1);
 
 			break;
 		case FILEID2:
@@ -1426,7 +1426,7 @@ void __not_in_flash_func(frehd_port_out)(word addr, byte data)
 }
 
 //-----------------------------------------------------------------------------
-byte __not_in_flash_func(frehd_port_in)(word addr)
+byte __not_in_flash_func(control_port_in)(word addr)
 {
     byte data = 0xFF;
 
@@ -1435,7 +1435,7 @@ byte __not_in_flash_func(frehd_port_in)(word addr)
 		case DATA2:
 			data = fhd_data2[fhd_data2Index++];
 			if (fhd_data2Index==fhd_size2) {   // if sent SIZE bytes out of the buffer
-				frehd_command_dispatch(3); // STEP 3 : When all bytes have been Sent Back
+				command_dispatch(3); // STEP 3 : When all bytes have been Sent Back
 			}
 			break;
 		case SIZE2:
@@ -1468,13 +1468,13 @@ byte __not_in_flash_func(frehd_port_in)(word addr)
 
 //-----------------------------------------------------------------------------
 
-void __not_in_flash_func(ServiceFreHdStateMachine)(void) {
+void __not_in_flash_func(ServicePortsStateMachine)(void) {
 
 	// IF Busy Flag Set then we need process a command
 	if ( fhd_status == TRS_HARD_BUSY ) {
 
 		// STEP 10; Service the command by CORE 0
-		frehd_command_dispatch(10);
+		command_dispatch(10);
 	}
 
 }

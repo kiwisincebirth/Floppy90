@@ -8,7 +8,6 @@
 #include "defines.h"
 #include "z80_bus.h"
 #include "file.h"
-//#include "frehd.h"
 
 // Force 4-byte alignment for faster 32-bit internal bus access
 // and ensure they are placed in SRAM (not Flash).
@@ -36,12 +35,11 @@ static byte __aligned(4) trampoline_first[256];
 // the three bytes in offset's 1,2,3 of all springboard elements
 static byte __aligned(4) trampoline_code[4] = { 0x00, 0x00, 0x34, 0xC9 };
 
-// Paged RAM (128KB) in region 0x3400 - 0x05FF
+// Main Paged RAM (128KB) in region 0x3400 - 0x05FF
 // 256 pages * 512 bytes = 0x20000
 static byte __aligned(4) by_pagedmemory[0x20000];
 
-// Use volatile if currentPage is modified by both
-// the Z80 bus loop and a background USB/UI task.
+// Volatile as modified by both Z80 and background
 static volatile byte currentPage = 0;
 
 // current page stack with 16 levels
@@ -50,9 +48,18 @@ static volatile byte currentPage = 0;
 static byte page_ring[STACK_SIZE];
 static byte ring_ptr = 4;
 
-// 512 Bytes ram for 0x3600 to 0x37FF
-// Note: addresses 0x3400-0x35FF will effectively "shadow" this RAM
-static byte __aligned(4) by_extramemory[0x200];
+// Extra Paged Ram (128KB) in Region 0x3600 to 0x37FF
+// 256 pages * 512 bytes = 0x20000
+static byte __aligned(4) by_extramemory[0x20000];
+
+// Volatile as modified by both Z80 and background
+static volatile byte extraPage = 0;
+
+// backup of extra page
+static volatile byte savedExtraPage = 0;
+
+// is the current page stack push/pull enabled
+static volatile byte stackEnabled = 1;
 
 void MemInit(void) {
 
@@ -106,8 +113,7 @@ void __not_in_flash_func(ServiceHighMemoryOperation)(word addr, const byte bIsRe
 void __not_in_flash_func(ServiceExtraMemory)(word addr, const byte bIsRead)
 {
 	volatile byte* pby = NULL;
-	// todo not ideal, should be passed in the request
-	// byte bIsRead = ! get_gpio(RD_PIN); // write or read BUS operation
+
 	addr = (addr - 0x3000) & 0x07FF; // truncate address to range $0000 - $07FF
 
 	if (addr<0x400) { // springboard memory 0x000 - 0x3FF
@@ -118,8 +124,9 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr, const byte bIsRead)
 		if (offset==0) { // fist offset byte
 
 			if (bIsRead) {
-				// Read of Offset 0 If a CALL, push ht current Page
-				if (trampoline_first[accessPage] == 0xCD) {
+				// Read of Offset 0 If a CALL
+				if (trampoline_first[accessPage] == 0xCD && stackEnabled) {
+					// push the current page to the Ring
 					page_ring[ring_ptr] = currentPage;
 					ring_ptr = (ring_ptr + 1) & STACK_MASK;
 				}
@@ -135,24 +142,23 @@ void __not_in_flash_func(ServiceExtraMemory)(word addr, const byte bIsRead)
 
 			// Set the Current page
 			currentPage = accessPage;
-			// printf("\r\nmemPage(%d)",currentPage);
 
 		} else if (bIsRead) { // READS of offset 123, WRITES ignored
 
-			if (offset == 3) {
-				// On RET (Offset 3): Move Back and Restore current page
+			// On RET (Offset 3):
+			if (offset == 3 && stackEnabled) {
+				// Restore the current page from the ring pointer
 				ring_ptr = (ring_ptr - 1) & STACK_MASK;
 				currentPage = page_ring[ring_ptr];
-				// printf("\r\nmemPage(%d)",currentPage);
 			}
 
 			pby = &trampoline_code[offset]; // the offset code byte to return
 		} // else WRITES are ignored Completely
 
-	} else if ( addr>=0x600) { // general purpose 0x600 - 0x7FF(actually 0x7DF)
-		pby = &by_extramemory[addr - 0x600]; //
+	} else if ( addr>=0x600) { // Extra paged memory 0x600 - 0x7DF
+		pby = &by_extramemory[(addr - 0x600) + (extraPage * 0x200)];
 
-	} else { // paged memory 0x400 0x5FF
+	} else { // MAIN paged memory 0x400 0x5FF
 		pby = &by_pagedmemory[(addr - 0x400) + (currentPage * 0x200)];
 	}
 
@@ -210,10 +216,13 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr, const byte bIsRead)
 				}
 			}
 			break;
-		case 0x37F0: // Virtual MEMORY PAGE Register
-			pby = &currentPage; // Page control register (Read/Write)
+		case 0x37F0: // Main Banked Ram Page Register
+			pby = &currentPage; // Main Page control register (Read/Write)
 			break;
-		case 0x37F1:
+		case 0x37F1: // Extra Banked Ram Page Register
+			pby = &extraPage; // Extra Page control register (Read/Write)
+			break;
+		//case 0x37F4:
 			// todo This needs to be implemented, the below is not correct.
 			// if (bIsRead) {
 			// 	// POP operation: Restore previous page and return it to Z80
@@ -225,6 +234,30 @@ void __not_in_flash_func(ServiceExtraPorts)(word addr, const byte bIsRead)
 			// 	ring_ptr = (ring_ptr + 1) & STACK_MASK;
 			// }
 			// pby = &currentPage; // RW Page control register at $37F0
+			//break;
+		case 0x37F8: // Command Register
+
+			//
+			// todo need to ensure these commands prevent further PUSHES
+			//
+
+			byte cmd = FinishWriteOperation(); // get the command
+			if (cmd==1) {
+
+				// push the current page to the Ring
+				page_ring[ring_ptr] = currentPage;
+				ring_ptr = (ring_ptr + 1) & STACK_MASK;
+				savedExtraPage = extraPage; // save the extra page
+				stackEnabled = 0; // disable stack updates
+
+			} else if (cmd==2) {
+
+				// Restore the current page from the ring pointer
+				ring_ptr = (ring_ptr - 1) & STACK_MASK;
+				currentPage = page_ring[ring_ptr];
+				extraPage = savedExtraPage; // restore the extra page
+				stackEnabled = 1; // renable stack updates
+			}
 			break;
 		default:
 			break;

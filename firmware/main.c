@@ -16,7 +16,7 @@
 #include "sd_core.h"
 #include "fdc.h"
 #include "hdc.h"
-#include "frehd.h"
+#include "ports.h"
 #include "system.h"
 #include "cli.h"
 #include "z80_bus.h"
@@ -106,7 +106,7 @@ void __not_in_flash_func(ServiceBackendStateMachines)(void) {
 
 		if ( ! g_byResetActive) {
 			// When Not In Reset
-			ServiceFreHdStateMachine();
+			ServicePortsStateMachine();
 			UpdateCounters(); // todo ? move this code above the if
 		}
 	}
@@ -137,7 +137,7 @@ int main()
     SysInit();			// Init State - Hardware.CFG File
 	MemInit();			// init Paged Memory State
 	LoadFDCBootBlock(); // Loads BOOT.SYS - FDC boot block
-	FreHDInit();		// currently does nothing
+	PortsInit();		// currently does nothing
     InitCli();			// init some variables
 
 	// service Memory Requests

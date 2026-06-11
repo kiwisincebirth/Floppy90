@@ -105,14 +105,14 @@
 #define TRS_HARD_CIP	  		0x02
 #define TRS_HARD_ERR	  		0x01
 
-void FreHDInit(void);
+void PortsInit(void);
 
 // Z80 Port Functions
-void __not_in_flash_func(frehd_port_out)(word addr, byte data);
-byte __not_in_flash_func(frehd_port_in)(word addr);
+void __not_in_flash_func(control_port_out)(word addr, byte data);
+byte __not_in_flash_func(control_port_in)(word addr);
 
 // background servicing.
-void __not_in_flash_func(ServiceFreHdStateMachine)(void);
+void __not_in_flash_func(ServicePortsStateMachine)(void);
 
 // ===================================
 

@@ -48,7 +48,7 @@ add_executable(Floppy80
     memory.c
     logging.c
     hdc.c
-    frehd.c
+        ports.c
     z80_bus.c
         tests.c
         tests.h
