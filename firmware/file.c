@@ -43,8 +43,8 @@ BYTE resultTranslation[] = {
 	TRS_FILE_NOT_FOUND, 	/* (4) Could not find the file */
 	TRS_PATH_NOT_FOUND,		/* (5) Could not find the path */
 	TRS_ILLEGAL_FILENAME,	/* (6) The path name format is invalid */
-	FR_DENIED,				/* (7) Access denied or directory full */
-	FR_EXIST,				/* (8) Name Collision File already exists */
+	TRS_ACCESS_DENIED,		/* (7) Access denied or directory full */
+	TRS_FILE_EXISTS,		/* (8) Name Collision File already exists */
 	TRS_ILL_FILENUMBER,		/* (9) The file/directory object is invalid */
 	TRS_WRITE_PROTECTED,	/* (10) The physical drive is write protected */
 	TRS_ILLEGAL_DRIVENUM,	/* (11) The logical drive number is invalid */

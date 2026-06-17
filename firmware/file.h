@@ -108,6 +108,8 @@ extern "C" {
 	#define TRS_EOF_ENCOUNTERED  (28 | 0x40)
 	#define TRS_ILLEGAL_DRIVENUM (32 | 0x40)
 
+	#define TRS_ACCESS_DENIED	 (58 | 0x40)
+	#define TRS_FILE_EXISTS		 (59 | 0x40)
 	#define TRS_PATH_NOT_FOUND   (60 | 0x40)
 	#define TRS_ILLEGAL_DOS      (61 | 0x40)
 	#define TRS_INTERNAL_DOS     (62 | 0x40)
