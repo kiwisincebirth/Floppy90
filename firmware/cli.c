@@ -36,7 +36,6 @@ static char szHelpText[] = {
                         "reboot     - Reboot normally\n"
                         "dir filter - directory list of the SD-Card\n"
                         "             optional filter. e.g. dir ini\n"
-                        "tests      - runs limited unit tests\n"
                         "help       - this message\n"
                     };
 
@@ -199,9 +198,13 @@ void ProcessCommand(char* psz)
     } else if (stricmp(szCmd, "FLASH") == 0) {
         rom_reset_usb_boot(0,0);
     } else if (stricmp(szCmd, "f") == 0) {
-		rom_reset_usb_boot(0,0);
+	rom_reset_usb_boot(0,0);
+
+	// HIDDEN COMMANDS FROM HERE
     } else if (stricmp(szCmd, "t") == 0) {
-        RunUnitTests();
+        RunUnitTests();			// run unit tests
+    } else if (stricmp(szCmd, "si") == 0) {
+    	SysInit();			// Init State - Hardware.CFG File
     } else {
         puts("Unknown command");
         puts(szHelpText);

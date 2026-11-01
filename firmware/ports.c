@@ -530,6 +530,16 @@ byte __not_in_flash_func(CMD_CHANGEDIR)(byte step)
 }
 
 /*
+ * COPY Command
+ * COPY
+ *
+ */
+byte __not_in_flash_func(CMD_COPYFILE)(byte step)
+{
+	return STATUS_OK;
+}
+
+/*
  * Make directory
  * MKDIR {nameOfDirectory} - Creates a named directory
  *
@@ -1323,7 +1333,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 
 	// Directory Command ( $18 - $1F )
 	[TRS_NEWER_CHANGEDIR]	= CMD_CHANGEDIR,
-	// [TRS_NEWER_COPYFILE] = CMD_COPYFILE,
+	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE,
 	[TRS_NEWER_DELETE]		= CMD_DELETE,
 	[TRS_NEWER_MAKEDIR]		= CMD_MAKEEDIR,
 	[TRS_NEWER_RENAME]		= CMD_RENAME,

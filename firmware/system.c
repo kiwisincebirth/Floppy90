@@ -379,20 +379,19 @@ void UpdateCounters(void)
 ////////////////////////////////////////////////////////////////////////////////////
 void SysProcessConfigEntry(char szLabel[], char* psz) {
 	/*
+	TODO - Need to add the following
 	EnablePicoRAM=1
-	=1
-	EnableFDCBoot=1
 	FDCBOOT=/SYS/BOOT.SYS
 	EnableInterrupts=1
 	*/
 
-	if (strcmp(szLabel, "EnableFDCBoot") == 0) {
+	if (stricmp(szLabel, "EnableFDCBoot") == 0) {
 		g_byEnableFDCBoot = atoi(psz);
-	} else if (strcmp(szLabel, "EnableFreHDBoot") == 0) {
+	} else if (stricmp(szLabel, "EnableFreHDBoot") == 0) {
 		g_byEnableFreHDBoot = atoi(psz);
-	} else if (strcmp(szLabel, "EnableHighRAM") == 0) {
+	} else if (stricmp(szLabel, "EnableHighRAM") == 0) {
 		g_byEnableUpperMem = atoi(psz);
-	} else if (strcmp(szLabel, "EnableWaitStates") == 0) {
+	} else if (stricmp(szLabel, "EnableWaitStates") == 0) {
 		g_byEnableWaitStates = atoi(psz);
 	}
 }
@@ -417,7 +416,6 @@ void SysInit(void)
 
 		if ((*psz != 0) && (*psz != ';') && (*psz != '#')) // blank line or a comment line
 		{
-			StrToUpper(psz);
 			psz = CopyLabelName(psz, szLabel, sizeof(szLabel)-2);
 			SysProcessConfigEntry(szLabel, psz);
 		}

@@ -7,7 +7,7 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 3
-#define VERSION_STRING "0.3.0 (alpha)"
+#define VERSION_STRING "0.3.0 (beta)"
 
 //#pragma GCC optimize ("O0")
 #pragma GCC optimize ("O3")

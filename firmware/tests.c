@@ -28,9 +28,9 @@ void run_sanitizer_tests() {
         {"MYGAME/BASS",         "MYGAME/BASS",    0, "Standard Legacy"},
         {"MYGAME/BAS",          "MYGAME.BAS",     0, "Standard Legacy"},
         {"MYGAME/BA",           "MYGAME.BA",      0, "Standard Legacy"},
-		{"DIR/MYGAME/BASS",     "DIR/MYGAME/BASS",0, "Standard Legacy"},
-		{"DIR/MYGAME/BAS",      "DIR/MYGAME.BAS", 0, "Standard Legacy"},
-		{"DIR/MYGAME/BA",       "DIR/MYGAME.BA",  0, "Standard Legacy"},
+	{"DIR/MYGAME/BASS",     "DIR/MYGAME/BASS",0, "Standard Legacy"},
+	{"DIR/MYGAME/BAS",      "DIR/MYGAME.BAS", 0, "Standard Legacy"},
+	{"DIR/MYGAME/BA",       "DIR/MYGAME.BA",  0, "Standard Legacy"},
 
     	{"DATA/TXT:1",          "DATA.TXT",       1, "Legacy with Drive"},
 
