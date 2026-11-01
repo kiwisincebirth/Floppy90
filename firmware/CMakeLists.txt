@@ -28,7 +28,7 @@ set(PICO_BOARD pico2 CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(Floppy80 C CXX ASM)
+project(Floppy90 C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -36,26 +36,22 @@ add_subdirectory(lib/no-OS-FatFS-SD-SPI-RPi-Pico-master/FatFs_SPI build)
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Floppy80
+add_executable(Floppy90
     main.c
-    fdc.c
     hw_config.c
     sd_core.c
     system.c
-    crc.c
     file.c
     cli.c
     memory.c
-    logging.c
-    hdc.c
-        ports.c
+    ports.c
     z80_bus.c
-        tests.c
-        tests.h
+    tests.c
+    tests.h
 )
 
 # pull in common dependencies
-target_link_libraries(Floppy80
+target_link_libraries(Floppy90
     pico_stdlib
     pico_multicore
     hardware_pio
@@ -68,10 +64,10 @@ pico_enable_stdio_usb(${PROJECT_NAME} 1)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
 
 if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(Floppy80 pico_cyw43_arch_none)
+    target_link_libraries(Floppy90 pico_cyw43_arch_none)
 endif()
 
 # create map/bin/hex file etc.
-pico_add_extra_outputs(Floppy80)
+pico_add_extra_outputs(Floppy90)
 
 # add url via pico_set_program_url

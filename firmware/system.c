@@ -1,7 +1,5 @@
 #include "defines.h"
 #include "system.h"
-#include "fdc.h"
-#include "hdc.h"
 #include "file.h"
 #include "stdlib.h"
 #include "ctype.h"

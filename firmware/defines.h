@@ -2,19 +2,13 @@
 #ifndef _H_DEFINES_
 #define _H_DEFINES_
 
-//#define ENABLE_DOUBLER 1
-//#define ENABLE_LOGGING 1
-
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 3
 #define VERSION_STRING "0.3.0 (beta)"
 
-//#pragma GCC optimize ("O0")
 #pragma GCC optimize ("O3")
 
 #include <stdio.h>
-
-//#define CDC_ITF     0           /* USB CDC interface no */
 
 typedef unsigned long      	uint32_t;
 typedef unsigned long long 	uint64_t;
@@ -23,9 +17,6 @@ typedef unsigned char		byte;
 typedef unsigned short     	word;
 
 #define SizeOfArray(x) (sizeof(x) / sizeof(x[0]))
-
-// set to 1 to enable capture of bus activity logging to sd-card
-// #define ENABLE_TRACE_LOG 0
 
 #define INT_PIN       0
 #define WAIT_PIN      1
@@ -131,33 +122,6 @@ typedef unsigned short     	word;
 #ifndef MAX_PATH
   #define MAX_PATH 64
 #endif
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// FDC logging
-
-// typedef struct {
-// 	uint8_t type;
-// 	uint8_t val;
-// 	uint8_t op1;
-// } LogType;
-// #define LOG_SIZE 4096
-// extern LogType fdc_log[LOG_SIZE];
-// extern int log_head;
-// extern int log_tail;
-// enum {
-// 	write_drive_select = 0,
-// 	write_data,
-// 	write_sector,
-// 	write_track,
-// 	write_cmd,
-// 	read_drive_select,
-// 	read_data,
-// 	read_sector,
-// 	read_track,
-// 	read_status,
-// 	port_out,
-// 	port_in
-// };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // CLI Command Line

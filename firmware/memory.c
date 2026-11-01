@@ -18,7 +18,7 @@
 // The bootblock served by FDC at initial L2 Startup
 static byte __aligned(4) fdc_bootblock[256];
 
-// Poiter into BootBlock
+// Pointer into BootBlock
 static byte fdc_bootblockIdx = 0;
 
 // ==================================================

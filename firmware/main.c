@@ -14,33 +14,12 @@
 
 #include "defines.h"
 #include "sd_core.h"
-#include "fdc.h"
-#include "hdc.h"
 #include "ports.h"
 #include "system.h"
 #include "cli.h"
 #include "z80_bus.h"
 #include "memory.h"
 #include "file.h"
-
-///////////////////////////////////////////////////////////////////////////////
-// API documentions is located at
-// https://raspberrypi.github.io/pico-sdk-doxygen/
-///////////////////////////////////////////////////////////////////////////////
-
-///////////////////////////////////////////////////////////////////////////////
-// to get memory usage of the compilied program enter
-//
-//   size build/Floppy80.elf
-//
-// in a bash terminal window
-//
-// Output is
-// - text gives you the size of the text segment (or code segment).
-// - data gives you the size of the data segment.
-// - bss gives you the size of the block started by symbol segment.
-// - dec is the size of the text, data and bss size added together in decimal, and hex is the same number in hexadecimal.
-///////////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////////////////////////////////////////////////////////
 // GPIO NET        IN   OUT

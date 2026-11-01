@@ -7,12 +7,8 @@
 
 #include "defines.h"
 #include "sd_core.h"
-// #include "system.h"
-#include "fdc.h"
 
 #include "ff.h"
-// #include "diskio.h"
-// #include "f_util.h"
 #include "hw_config.h"
 #include "sd_card.h"
 #include "util.h"
