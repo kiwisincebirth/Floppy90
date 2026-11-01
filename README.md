@@ -2,18 +2,21 @@
 
 ## Background
 
-The Floppy-90 is a Software solution that runs on the Floppy-80
-(Model 1) hardware and provides 
+Floppy-90 is a Software solution that runs on the Raspberry Pi RP2350 
+microcontroller, that exposes services to software running on a Zilog Z80
 
-It is based on the FreHD API's, but extends these to provide additional features
+The target Platform for this is the TRS-80 Model 1 (and compatible) computers,
+and is based on the Floppy-80 (Model 1) hardware device.
+This device provides an interface to the Z80 bus so services can be used 
+by software running on the Z80 cpu.
 
-It is currently exclusivly used by the kDOS operating system which utilises
+It is currently exclusively used by the kDOS operating system which utilises
 it for is backend file storage.
 
 ## Features
 
-The Floppy-90 is a Software solution that emulates 
-- Basic File Services API compatible with FreHD
+Floppy-90 is a Software solution that provides  
+- A basic File Services API compatible with FreHD
 - Extended File Services API allowing for multiple files to be held open
 - Ability to serve a Floppy drive boot block
 - Ability to serve a FreHD boot sector
@@ -23,7 +26,8 @@ The Floppy-90 is a Software solution that emulates
 - Wait State Generation (optional)
 - Software Debugging Interface
 
-An SD card is required to store disk images and configuration data
+Unlike the Floppy-80 project (which this is based) neither Floppy of Hard Drive
+emulation is provided in any meaningful way.
 
 ## Documentation
 
@@ -51,7 +55,7 @@ cd build
 make Floppy90
 ```
 
-This will create Floppy90.uf2 file which you burn to the RPI PICO
+This will create Floppy90.uf2 file which you flash to the RPI PICO
 
 Alternately you can use VSCode and the RPI Pico extension.
 
@@ -63,4 +67,4 @@ These are DEV resources:
 
 ## Credits
 
-Floppy 80 Model 1 Project
+Floppy 80 Model 1 Project which this software is based.
