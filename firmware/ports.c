@@ -877,7 +877,7 @@ void debug_dump_buffer(const char* title, const byte* buf, size_t len) {
  * 1. TRS writes COMMAND2, SIZE2 set to 36
  * 2. TRS writes DATA2 (36 bytes)
  *       byte 0 : open options
- *       byte 1 : logical record lenght 0=256
+ *       byte 1 : logical record length 0=256
  *       byte 2,3 : location of Buffer in TRS memory
  *       bytes 4..36 : fcb data from TRS
  * 3. TRS waits
@@ -965,6 +965,7 @@ byte __not_in_flash_func(CMD_FILE_OPEN)(byte step) {
  * 1. TRS writes COMMAND2
  * 2. TRS waits
  * 4. TRS checks status for error (in ERROR2 if any)
+ * 5. TRS reads 32 bytes back containing the Original FCB (including filename)
  */
 byte __not_in_flash_func(CMD_FILE_CLOSE)(byte step) {
 
@@ -1274,7 +1275,7 @@ byte __not_in_flash_func(CMD_FILE_POSITION)(byte step) {
  * 4. TRS checks status.
  *      ERR : error in ERROR2 - including EOF Error, if no bytes
  *      DRQ : should be true otherwise
- * 5. TRS reads DATA2 FCB, should be 16 bytes
+ * 5. TRS reads DATA2 FCB, should be 9 bytes 5th to 13 byte
  */
 byte __not_in_flash_func(CMD_FILE_FCB)(byte step) {
 
