@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <util.h>
 
+#include "filecopy.h"
+
 #define	AM_HID_SYS (AM_HID + AM_SYS)	/* Hidden System Files */
 
 // ORIGINAL FRE HD Bootloader Block - Z80 Code.
@@ -70,9 +72,11 @@ static volatile byte  fhd_command2 = 0;
 // FILEID - holds current file ID for File IO
 static volatile byte  fhd_fileid = 0;
 
+#define FHD_DATA2_SIZE (256u + 64u)
+
 // DATA2 - data buffer shared with Z80 and underlying process
 // extra bytes for FCB storage (32) + another 32 for extra safety
-static volatile byte __aligned(4) fhd_data2[256 + 64] = {0};
+static volatile byte __aligned(4) fhd_data2[FHD_DATA2_SIZE] = {0};
 
 // SIZE2 - size of data in DATA2
 static volatile byte  fhd_size2 = 0;
@@ -529,13 +533,113 @@ byte __not_in_flash_func(CMD_CHANGEDIR)(byte step)
 	return STATUS_OK;
 }
 
+static bool ParseCopyArgs(char *argBuf, size_t maxLen, char **outSrc, char **outDst) {
+	if (!argBuf || maxLen == 0) return false;
+
+	argBuf[maxLen - 1] = '\0';
+
+	char *p = argBuf;
+	while (*p && isspace((unsigned char)*p)) {
+		p++;
+	}
+	if (*p == '\0') return false;
+
+	*outSrc = p;
+	while (*p && !isspace((unsigned char)*p)) {
+		p++;
+	}
+	if (*p == '\0') return false;
+
+	*p++ = '\0';
+
+	while (*p && isspace((unsigned char)*p)) {
+		p++;
+	}
+	if (*p == '\0') return false;
+
+	*outDst = p;
+
+	char *end = p + strlen(p);
+	while (end > p && isspace((unsigned char)*(end - 1))) {
+		end--;
+	}
+	*end = '\0';
+
+	return true;
+}
+
 /*
  * COPY Command
- * COPY
+ * COPY <sourceFilespec> <destFilespec>
  *
+ * 1. TRS issues COMMAND2
+ * 2. TRS issues SIZE2, sends DATA2
+ * 3. TRS waits
+ * 4. TRS reads status.
+ * 			If TRS_HARD_ERR set, check ERROR2 and exit
+ *			If DATA is available, then
+ * 5. TRS Reads SIZE2 bytes. -> displays to user
  */
-byte __not_in_flash_func(CMD_COPYFILE)(byte step)
-{
+uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
+	if (step == 2) {
+		return TRS_HARD_BUSY;
+	}
+
+	if (step == 10) {
+		char *buf = (char *)fhd_data2;
+		char *srcSpec = NULL;
+		char *dstSpec = NULL;
+
+		if (!ParseCopyArgs(buf, FHD_DATA2_SIZE, &srcSpec, &dstSpec)) {
+			fhd_error2 = FR_INVALID_PARAMETER;
+			return STATUS_ERROR;
+		}
+
+		printf("\r\nCOPY(%s -> %s)", srcSpec, dstSpec);
+
+		uint32_t copiedCount = 0;
+		FRESULT copyRes = CopyFileSpec(srcSpec, dstSpec, &copiedCount);
+
+		if (copyRes != FR_OK) {
+			fhd_error2 = (uint8_t)copyRes;
+
+			if (copiedCount == 0) {
+				return STATUS_ERROR;
+			}
+
+			int errLen = snprintf(
+				buf,
+				FHD_DATA2_SIZE,
+				"%lu File(s) Copied, with Error %u.\r",
+				(unsigned long)copiedCount,
+				(unsigned int)copyRes
+			);
+
+			if (errLen < 0) {
+				return STATUS_ERROR;
+			}
+
+			fhd_size2 = (uint16_t)errLen + 1;
+			return STATUS_OKDATA;
+		}
+
+		fhd_error2 = FR_OK;
+		int okLen = snprintf(
+			buf,
+			FHD_DATA2_SIZE,
+			"%lu File(s) Copied.\r",
+			(unsigned long)copiedCount
+		);
+
+		if (okLen < 0) {
+			fhd_error2 = FR_INT_ERR;
+			return STATUS_ERROR;
+		}
+
+		fhd_size2 = (uint16_t)okLen + 1;
+		return STATUS_OKDATA;
+	}
+
 	return STATUS_OK;
 }
 

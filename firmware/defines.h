@@ -3,12 +3,10 @@
 #define _H_DEFINES_
 
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 3
-#define VERSION_STRING "0.3.0 (beta)"
+#define VERSION_MINOR 4
+#define VERSION_STRING "0.4.0 (beta)"
 
 #pragma GCC optimize ("O3")
-
-#include <stdio.h>
 
 typedef unsigned long      	uint32_t;
 typedef unsigned long long 	uint64_t;
