@@ -591,17 +591,17 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 		char *dstSpec = NULL;
 
 		if (!ParseCopyArgs(buf, FHD_DATA2_SIZE, &srcSpec, &dstSpec)) {
-			fhd_error2 = FR_INVALID_PARAMETER;
+			fhd_error2 = TRS_ILLEGAL_FILENAME;
 			return STATUS_ERROR;
 		}
 
 		printf("\r\nCOPY(%s -> %s)", srcSpec, dstSpec);
 
 		uint32_t copiedCount = 0;
-		FRESULT copyRes = CopyFileSpec(srcSpec, dstSpec, &copiedCount);
+		BYTE copyErr = CopyFileSpec(srcSpec, dstSpec, &copiedCount);
 
-		if (copyRes != FR_OK) {
-			fhd_error2 = (uint8_t)copyRes;
+		if (copyErr != FR_OK) {
+			fhd_error2 = copyErr;
 
 			if (copiedCount == 0) {
 				return STATUS_ERROR;
@@ -610,11 +610,10 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 			int errLen = snprintf(
 				buf,
 				FHD_DATA2_SIZE,
-				"%lu File(s) Copied, with Error %u.\r",
+				"%lu File(s) Copied, with Error %u\r\n",
 				(unsigned long)copiedCount,
-				(unsigned int)copyRes
+				(unsigned int)copyErr
 			);
-
 			if (errLen < 0) {
 				return STATUS_ERROR;
 			}
@@ -627,12 +626,10 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 		int okLen = snprintf(
 			buf,
 			FHD_DATA2_SIZE,
-			"%lu File(s) Copied.\r",
+			"%lu File(s) Copied.\r\n",
 			(unsigned long)copiedCount
 		);
-
 		if (okLen < 0) {
-			fhd_error2 = FR_INT_ERR;
 			return STATUS_ERROR;
 		}
 
@@ -679,46 +676,79 @@ byte __not_in_flash_func(CMD_MAKEEDIR)(byte step)
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-byte __not_in_flash_func(CMD_DELETE)(byte step)
-{
-	if (step == 2) return TRS_HARD_BUSY;
+byte __not_in_flash_func(CMD_DELETE)(byte step) {
+    if (step == 2) return TRS_HARD_BUSY;
 
-	if (step == 10) {
-		char* psz = (char*)&fhd_data2[0];
-		char cleanPath[33];
-		byte driveNum;
-		bool hadAtLeastOneError = false;
+    if (step == 10) {
+        char *psz = (char *)&fhd_data2[0];
+        char cleanPath[33];
+        byte driveNum = 0;
+        uint32_t deletedCount = 0;
+        BYTE lastErr = FR_OK;
+        bool hadError = false;
 
-		// Use strtok to split the string by spaces
-		// Note: fhd_data2 is modified by strtok, which is fine here.
-		char* token = strtok(psz, " ");
+        char *token = strtok(psz, " ");
 
-		while (token != NULL) {
-			// 1. Sanitize the current token (filename)
-			sanitizeTrs80Path(token, cleanPath, &driveNum, 32);
+        while (token != NULL) {
+            sanitizeTrs80Path(token, cleanPath, &driveNum, 32);
 
-			if (cleanPath[0] != '\0') {
-				printf("\r\nRM(%s) ", cleanPath);
+            if (cleanPath[0] != '\0') {
+                printf("\r\nRM(%s) ", cleanPath);
 
-				// 2. Attempt to delete
-				BYTE res = FileDelete(cleanPath);
+                uint32_t tokenDeleted = 0;
+                BYTE delErr = DeleteFileSpec(cleanPath, &tokenDeleted);
+                deletedCount += tokenDeleted;
 
-				if (res != FR_OK) {
-					printf("FAILED: %d", res);
-					fhd_error2 = res; // Store the last error
-					hadAtLeastOneError = true;
-				} else {
-					printf("OK");
-				}
-			}
+                if (delErr != FR_OK) {
+                    printf("FAILED: %d", delErr);
+                    lastErr = delErr;
+                    hadError = true;
+                } else {
+                    printf("OK (%lu)", (unsigned long)tokenDeleted);
+                }
+            }
 
-			// 3. Get next filename
-			token = strtok(NULL, " ");
-		}
+            token = strtok(NULL, " ");
+        }
 
-		return hadAtLeastOneError ? STATUS_ERROR : STATUS_OK;
-	}
-	return STATUS_OK;
+        if (hadError) {
+            fhd_error2 = lastErr;
+
+            if (deletedCount == 0) {
+                return STATUS_ERROR;
+            }
+
+            int errLen = snprintf(
+                (char *)&fhd_data2[0],
+                FHD_DATA2_SIZE,
+                "%lu File(s) Deleted, with Error %u\r\n",
+                (unsigned long)deletedCount,
+                (unsigned int)lastErr
+            );
+            if (errLen < 0) {
+                return STATUS_ERROR;
+            }
+
+            fhd_size2 = (uint16_t)errLen + 1;
+            return STATUS_OKDATA;
+        }
+
+        fhd_error2 = FR_OK;
+        int okLen = snprintf(
+            (char *)&fhd_data2[0],
+            FHD_DATA2_SIZE,
+            "%lu File(s) Deleted.\r\n",
+            (unsigned long)deletedCount
+        );
+        if (okLen < 0) {
+            return STATUS_ERROR;
+        }
+
+        fhd_size2 = (uint16_t)okLen + 1;
+        return STATUS_OKDATA;
+    }
+
+    return STATUS_OK;
 }
 
 /*

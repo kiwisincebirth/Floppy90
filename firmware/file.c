@@ -35,32 +35,32 @@ void FileSystemInit(void)
 // 	DB	$1A	; (7) Access denied or directory full
 // 	DB	$19	; (8) File Path Exists : Name Collission
 
-BYTE resultTranslation[] = {
-	FR_OK,					/* (0) Succeeded */
-	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
-	FR_INT_ERR,				/* (2) Assertion failed */
-	FR_NOT_READY,			/* (3) The physical drive cannot work */
-	TRS_FILE_NOT_FOUND, 	/* (4) Could not find the file */
-	TRS_PATH_NOT_FOUND,		/* (5) Could not find the path */
-	TRS_ILLEGAL_FILENAME,	/* (6) The path name format is invalid */
-	TRS_ACCESS_DENIED,		/* (7) Access denied or directory full */
-	TRS_FILE_EXISTS,		/* (8) Name Collision File already exists */
-	TRS_ILL_FILENUMBER,		/* (9) The file/directory object is invalid */
-	TRS_WRITE_PROTECTED,	/* (10) The physical drive is write protected */
-	TRS_ILLEGAL_DRIVENUM,	/* (11) The logical drive number is invalid */
-	FR_NOT_ENABLED,			/* (12) The volume has no work area */
-	FR_NO_FILESYSTEM,		/* (13) There is no valid FAT volume */
-	FR_MKFS_ABORTED,		/* (14) The f_mkfs() aborted due to any problem */
-	FR_TIMEOUT,				/* (15) Could not get a grant to access the volume within defined period */
-	FR_LOCKED,				/* (16) The operation is rejected according to the file sharing policy */
-	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
-	FR_TOO_MANY_OPEN_FILES,	/* (18) Number of open files > FF_FS_LOCK */
-	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */
-};
-
-BYTE __inline trans(FRESULT result) {
-	return result < 20 ? resultTranslation[result] : result;
-}
+// static BYTE resultTranslation[] = {
+// 	FR_OK,					/* (0) Succeeded */
+// 	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
+// 	FR_INT_ERR,				/* (2) Assertion failed */
+// 	FR_NOT_READY,			/* (3) The physical drive cannot work */
+// 	TRS_FILE_NOT_FOUND, 	/* (4) Could not find the file */
+// 	TRS_PATH_NOT_FOUND,		/* (5) Could not find the path */
+// 	TRS_ILLEGAL_FILENAME,	/* (6) The path name format is invalid */
+// 	TRS_ACCESS_DENIED,		/* (7) Access denied or directory full */
+// 	TRS_FILE_EXISTS,		/* (8) Name Collision File already exists */
+// 	TRS_ILL_FILENUMBER,		/* (9) The file/directory object is invalid */
+// 	TRS_WRITE_PROTECTED,	/* (10) The physical drive is write protected */
+// 	TRS_ILLEGAL_DRIVENUM,	/* (11) The logical drive number is invalid */
+// 	FR_NOT_ENABLED,			/* (12) The volume has no work area */
+// 	FR_NO_FILESYSTEM,		/* (13) There is no valid FAT volume */
+// 	FR_MKFS_ABORTED,		/* (14) The f_mkfs() aborted due to any problem */
+// 	FR_TIMEOUT,				/* (15) Could not get a grant to access the volume within defined period */
+// 	FR_LOCKED,				/* (16) The operation is rejected according to the file sharing policy */
+// 	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
+// 	FR_TOO_MANY_OPEN_FILES,	/* (18) Number of open files > FF_FS_LOCK */
+// 	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */
+// };
+//
+// static BYTE __inline trans(FRESULT result) {
+// 	return result < 20 ? resultTranslation[result] : result;
+// }
 
 //------------------------------------------------------------------------------
 
@@ -420,7 +420,9 @@ void __not_in_flash_func(sanitizeTrs80Path)(const char* src, char* dest, byte* d
             }
         }
 
-        if (isalnum(c) || c == '/' || c == '.') {
+    	// Added "*" wildcard support, not strictly a TRS-80 Character.
+        if (isalnum(c) || c == '/' || c == '.' || c == '*') {
+        //if (isalnum(c) || c == '/' || c == '.') {
             c = toupper(c);
             if (c == '/') {
                 lastSlashIdx = dIdx;

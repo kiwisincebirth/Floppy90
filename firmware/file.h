@@ -99,6 +99,8 @@ extern "C" {
 
 	//-----------------------------------------------------------------------------
 
+	// Success No Error
+	#define TRS_OK 0
 	// TRS-80 Error Codes - Error ORed with 0x40
 	#define TRS_DEVICE_NOT_AVAIL ( 8 | 0x40)
 	#define TRS_WRITE_PROTECTED  (15 | 0x40)
@@ -107,7 +109,8 @@ extern "C" {
 	#define TRS_FILE_NOT_FOUND   (24 | 0x40)
 	#define TRS_EOF_ENCOUNTERED  (28 | 0x40)
 	#define TRS_ILLEGAL_DRIVENUM (32 | 0x40)
-
+	// Intential GAP
+	// NEW Errors (previously undefined work down from 63)
 	#define TRS_ACCESS_DENIED	 (58 | 0x40)
 	#define TRS_FILE_EXISTS		 (59 | 0x40)
 	#define TRS_PATH_NOT_FOUND   (60 | 0x40)

@@ -22,4 +22,11 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath);
  */
 FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount);
 
+/**
+ * Deletes one or more files matching delSpec.
+ * Updates *deletedCount and returns FR_OK on success (including 0 wildcard matches),
+ * or a FatFs FRESULT error code on failure.
+ */
+FRESULT DeleteFileSpec(const char *delSpec, uint32_t *deletedCount);
+
 #endif //FLOPPY90_FILE_COPY_H

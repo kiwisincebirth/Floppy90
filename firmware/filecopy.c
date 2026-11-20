@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+#include "defines.h"
 #include "ff.h"
+#include "file.h"
 
 #define COPY_CHUNK_SIZE 4096
 
@@ -19,12 +22,12 @@
  */
 FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
     if (!srcPath || !dstPath || srcPath[0] == '\0' || dstPath[0] == '\0') {
-        return FR_INVALID_NAME;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     // Prevent copying a file directly onto itself if paths match identically
     if (strcmp(srcPath, dstPath) == 0) {
-        return FR_INVALID_PARAMETER;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     FIL *fsrc = (FIL *)malloc(sizeof(FIL));
@@ -35,7 +38,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         free(fsrc);
         free(fdst);
         free(buf);
-        return FR_INT_ERR;
+        return TRS_DEVICE_NOT_AVAIL;
     }
 
     FRESULT fr = f_open(fsrc, srcPath, FA_READ);
@@ -43,7 +46,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         free(fsrc);
         free(fdst);
         free(buf);
-        return fr;
+        return trans(fr);
     }
 
     // Non-interactive: create or overwrite destination file
@@ -53,7 +56,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         free(fsrc);
         free(fdst);
         free(buf);
-        return fr;
+        return trans(fr);
     }
 
     UINT br = 0, bw = 0;
@@ -71,7 +74,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         fr = f_write(fdst, buf, br, &bw);
         if (fr != FR_OK || bw < br) {
             if (fr == FR_OK) {
-                fr = FR_DISK_ERR;
+                fr = trans(FR_DISK_ERR);
             }
             break;
         }
@@ -84,9 +87,9 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
     free(fdst);
     free(buf);
 
-    if (fr != FR_OK) return fr;
-    if (frCloseDst != FR_OK) return frCloseDst;
-    if (frCloseSrc != FR_OK) return frCloseSrc;
+    if (fr != FR_OK) return trans(fr);
+    if (frCloseDst != FR_OK) return trans(frCloseDst);
+    if (frCloseSrc != FR_OK) return trans(frCloseSrc);
 
     return FR_OK;
 }
@@ -220,6 +223,28 @@ static void SplitSrcSpec(const char *srcSpec, char *dirPart, size_t dirSize, cha
     }
 }
 
+/* Reuse or share MatchWildcard, HasWildcard, EndsWithSep, JoinPath, SplitSrcSpec
+ * with copyfile.c so wildcard and path rules stay identical across COPY and DEL.
+ */
+
+static bool ShouldSkipEntry(const FILINFO *fno) {
+    if (!fno || fno->fname[0] == '\0') {
+        return true;
+    }
+    if (fno->fattrib & (AM_DIR | AM_HID | AM_SYS)) {
+        return true;
+    }
+    if (strcmp(fno->fname, ".") == 0 || strcmp(fno->fname, "..") == 0) {
+        return true;
+    }
+    if (strncmp(fno->fname, "._", 2) == 0) {
+        return true;
+    }
+    return false;
+}
+
+// ===============================================================
+
 /**
  * Copies one or more files matching srcSpec to dstSpec.
  * Returns FR_OK on full completion (including 0 matches), or the error code on failure.
@@ -229,7 +254,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         *copiedCount = 0;
     }
     if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
-        return FR_INVALID_NAME;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     char srcDir[128];
@@ -237,20 +262,20 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
 
     if (srcPat[0] == '\0') {
-        return FR_INVALID_NAME;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     bool wildcard = HasWildcard(srcPat);
     bool dstHasWildcard = HasWildcard(dstSpec);
 
     FILINFO dstInfo;
-    FRESULT dstStatFr = f_stat(dstSpec, &dstInfo);
+    FRESULT dstStatFr = trans(f_stat(dstSpec, &dstInfo));
     bool dstIsDir = EndsWithSep(dstSpec) ||
                     (dstStatFr == FR_OK && (dstInfo.fattrib & AM_DIR));
 
     // Wildcard source requires either a destination directory or a destination wildcard
     if (wildcard && !dstIsDir && !dstHasWildcard) {
-        return FR_INVALID_PARAMETER;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     if (!wildcard) {
@@ -258,28 +283,28 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         char fullDst[196];
 
         if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
-            return FR_INVALID_NAME;
+            return TRS_ILLEGAL_FILENAME;
         }
 
         if (dstIsDir) {
             if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, srcPat)) {
-                return FR_INVALID_NAME;
+                return TRS_ILLEGAL_FILENAME;
             }
         } else if (dstHasWildcard) {
             char mappedName[64];
             if (!ApplyDestWildcard(dstSpec, srcPat, mappedName, sizeof(mappedName))) {
-                return FR_INVALID_NAME;
+                return TRS_ILLEGAL_FILENAME;
             }
             snprintf(fullDst, sizeof(fullDst), "%s", mappedName);
         } else {
             snprintf(fullDst, sizeof(fullDst), "%s", dstSpec);
         }
 
-        FRESULT fr = CopySingleFile(fullSrc, fullDst);
-        if (fr == FR_OK && copiedCount) {
+        BYTE trsErr = CopySingleFile(fullSrc, fullDst);
+        if (trsErr == FR_OK && copiedCount) {
             *copiedCount = 1;
         }
-        return fr;
+        return trsErr;
     }
 
     DIR *dir = (DIR *)malloc(sizeof(DIR));
@@ -287,14 +312,14 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     if (!dir || !fno) {
         free(dir);
         free(fno);
-        return FR_INT_ERR;
+        return TRS_DEVICE_NOT_AVAIL;
     }
 
     FRESULT fr = f_opendir(dir, srcDir);
     if (fr != FR_OK) {
         free(dir);
         free(fno);
-        return fr;
+        return trans(fr);
     }
 
     char dstDir[128];
@@ -312,17 +337,8 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
             fr = FR_OK;
             break;
         }
-        // Skip subdirectories, dot entries, hidden/system files, and macOS AppleDouble files
-        if (fno->fattrib & AM_DIR) {
-            continue;
-        }
-        if (strcmp(fno->fname, ".") == 0 || strcmp(fno->fname, "..") == 0) {
-            continue;
-        }
-        if (fno->fattrib & (AM_HID | AM_SYS)) {
-            continue;
-        }
-        if (strncmp(fno->fname, "._", 2) == 0) {
+
+        if (ShouldSkipEntry(fno)) {
             continue;
         }
 
@@ -331,7 +347,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
             char fullDst[196];
 
             if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
-                fr = FR_INVALID_NAME;
+                fr = TRS_ILLEGAL_FILENAME;
                 break;
             }
 
@@ -339,19 +355,19 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
                 char mappedName[64];
                 if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
                     !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
-                    fr = FR_INVALID_NAME;
+                    fr = TRS_ILLEGAL_FILENAME;
                     break;
                 }
             } else {
                 if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, fno->fname)) {
-                    fr = FR_INVALID_NAME;
+                    fr = TRS_ILLEGAL_FILENAME;
                     break;
                 }
             }
 
-            FRESULT copyFr = CopySingleFile(fullSrc, fullDst);
-            if (copyFr != FR_OK) {
-                fr = copyFr;
+            BYTE copyErr = CopySingleFile(fullSrc, fullDst);
+            if (copyErr != FR_OK) {
+                fr = copyErr;
                 break;
             }
 
@@ -366,5 +382,113 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     free(fno);
 
     return fr;
+}
+
+// ===============================================================
+
+/**
+ * Deletes one or more files matching delSpec.
+ * Updates *deletedCount and returns FR_OK on success (including 0 wildcard matches),
+ * or a FatFs FRESULT error code on failure.
+ */
+FRESULT DeleteFileSpec(const char *delSpec, uint32_t *deletedCount) {
+if (deletedCount) {
+        *deletedCount = 0;
+    }
+    if (!delSpec || delSpec[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    char dirPart[128];
+    char patPart[64];
+    SplitSrcSpec(delSpec, dirPart, sizeof(dirPart), patPart, sizeof(patPart));
+
+    if (patPart[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    if (!HasWildcard(patPart)) {
+        char fullPath[196];
+        if (!JoinPath(fullPath, sizeof(fullPath), dirPart, patPart)) {
+            return TRS_ILLEGAL_FILENAME;
+        }
+
+        FILINFO info;
+        FRESULT statFr = f_stat(fullPath, &info);
+        if (statFr != TRS_OK) {
+            return trans(statFr);
+        }
+        if (info.fattrib & AM_DIR) {
+            return TRS_ACCESS_DENIED;
+        }
+        if (info.fattrib & AM_RDO) {
+            return TRS_OK;
+        }
+
+        BYTE delErr = FileDelete(fullPath);
+        if (delErr == TRS_OK) {
+            if (deletedCount) {
+                (*deletedCount)++;
+            }
+            return TRS_OK;
+        }
+        return delErr;
+    }
+
+    DIR *dir = (DIR *)malloc(sizeof(DIR));
+    FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
+    if (!dir || !fno) {
+        free(dir);
+        free(fno);
+        return TRS_DEVICE_NOT_AVAIL;
+    }
+
+    FRESULT fr = f_opendir(dir, dirPart);
+    if (fr != FR_OK) {
+        free(dir);
+        free(fno);
+        return trans(fr);
+    }
+
+    BYTE trsResult = TRS_OK;
+
+    while (1) {
+        fr = f_readdir(dir, fno);
+        if (fr != FR_OK) {
+            trsResult = trans(fr);
+            break;
+        }
+        if (fno->fname[0] == '\0') {
+            trsResult = TRS_OK;
+            break;
+        }
+        if (ShouldSkipEntry(fno) || (fno->fattrib & AM_RDO)) {
+            continue;
+        }
+
+        if (MatchWildcard(patPart, fno->fname)) {
+            char fullPath[196];
+            if (!JoinPath(fullPath, sizeof(fullPath), dirPart, fno->fname)) {
+                trsResult = TRS_ILLEGAL_FILENAME;
+                break;
+            }
+
+            BYTE delErr = FileDelete(fullPath);
+            if (delErr != TRS_OK) {
+                trsResult = delErr;
+                break;
+            }
+
+            if (deletedCount) {
+                (*deletedCount)++;
+            }
+        }
+    }
+
+    f_closedir(dir);
+    free(dir);
+    free(fno);
+
+    return trsResult;
 }
 
