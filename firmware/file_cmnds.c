@@ -281,7 +281,7 @@ static void SplitSrcSpec(const char *srcSpec, char *dirPart, size_t dirSize, cha
  * with copyfile.c so wildcard and path rules stay identical across COPY and DEL.
  */
 
-static bool ShouldSkipEntryEx(const FILINFO *fno, bool allowDirs) {
+static bool ShouldSkipEntry(const FILINFO *fno, bool allowDirs) {
     if (!fno || fno->fname[0] == '\0') {
         return true;
     }
@@ -298,10 +298,6 @@ static bool ShouldSkipEntryEx(const FILINFO *fno, bool allowDirs) {
         return true;
     }
     return false;
-}
-
-static bool ShouldSkipEntry(const FILINFO *fno) {
-    return ShouldSkipEntryEx(fno, false);
 }
 
 // ===============================================================
@@ -399,7 +395,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
             break;
         }
 
-        if (ShouldSkipEntry(fno)) {
+        if (ShouldSkipEntry(fno,false)) {
             continue;
         }
 
@@ -479,9 +475,9 @@ if (deletedCount) {
         if (statFr != TRS_OK) {
             return trans(statFr);
         }
-        if (info.fattrib & AM_DIR) {
-            return TRS_ACCESS_DENIED;
-        }
+        // if (info.fattrib & AM_DIR) {
+        //     return TRS_ACCESS_DENIED;
+        // }
         if (info.fattrib & AM_RDO) {
             return TRS_OK;
         }
@@ -523,7 +519,7 @@ if (deletedCount) {
             trsResult = TRS_OK;
             break;
         }
-        if (ShouldSkipEntry(fno) || (fno->fattrib & AM_RDO)) {
+        if (ShouldSkipEntry(fno,false) || (fno->fattrib & AM_RDO)) {
             continue;
         }
 
@@ -645,7 +641,7 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
             trsResult = TRS_OK;
             break;
         }
-        if (ShouldSkipEntryEx(fno, allowDirs)) {
+        if (ShouldSkipEntry(fno, allowDirs)) {
             continue;
         }
 
