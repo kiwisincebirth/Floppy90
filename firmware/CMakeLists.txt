@@ -42,8 +42,8 @@ add_executable(Floppy90
     sd_core.c
     system.c
     file.c
-    filecopy.c
-    filecopy.h
+        file_cmnds.c
+        file_cmnds.h
     cli.c
     memory.c
     ports.c

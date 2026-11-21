@@ -3,7 +3,7 @@
 // Created by Mark Pruden on 19/11/2026.
 //
 
-#include "filecopy.h"
+#include "file_cmnds.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,11 @@
 #include "ff.h"
 #include "file.h"
 
+// Copy Buffer Size
 #define COPY_CHUNK_SIZE 4096
+
+// Copy Buffer
+static uint8_t s_copyBuf[COPY_CHUNK_SIZE] __attribute__((aligned(4)));
 
 /**
  * Copies a single file from srcPath to dstPath.
@@ -32,12 +36,10 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
 
     FIL *fsrc = (FIL *)malloc(sizeof(FIL));
     FIL *fdst = (FIL *)malloc(sizeof(FIL));
-    uint8_t *buf = (uint8_t *)malloc(COPY_CHUNK_SIZE);
 
-    if (!fsrc || !fdst || !buf) {
+    if (!fsrc || !fdst) {
         free(fsrc);
         free(fdst);
-        free(buf);
         return TRS_DEVICE_NOT_AVAIL;
     }
 
@@ -45,7 +47,6 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
     if (fr != FR_OK) {
         free(fsrc);
         free(fdst);
-        free(buf);
         return trans(fr);
     }
 
@@ -55,13 +56,12 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         f_close(fsrc);
         free(fsrc);
         free(fdst);
-        free(buf);
         return trans(fr);
     }
 
     UINT br = 0, bw = 0;
     while (1) {
-        fr = f_read(fsrc, buf, COPY_CHUNK_SIZE, &br);
+        fr = f_read(fsrc, s_copyBuf, COPY_CHUNK_SIZE, &br);
         if (fr != FR_OK) {
             break;
         }
@@ -71,7 +71,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
             break;
         }
 
-        fr = f_write(fdst, buf, br, &bw);
+        fr = f_write(fdst, s_copyBuf, br, &bw);
         if (fr != FR_OK || bw < br) {
             if (fr == FR_OK) {
                 fr = trans(FR_DISK_ERR);
@@ -85,7 +85,6 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
 
     free(fsrc);
     free(fdst);
-    free(buf);
 
     if (fr != FR_OK) return trans(fr);
     if (frCloseDst != FR_OK) return trans(frCloseDst);
@@ -152,42 +151,97 @@ static bool JoinPath(char *outBuf, size_t outSize, const char *dir, const char *
     return (written > 0 && (size_t)written < outSize);
 }
 
+static void SplitNameExt(const char *name, char *stem, size_t stemCap, char *ext, size_t extCap)
+{
+    const char *dot = strrchr(name, '.');
+    if (dot && dot != name) {
+        size_t stemLen = (size_t)(dot - name);
+        if (stemLen >= stemCap) stemLen = stemCap - 1;
+        memcpy(stem, name, stemLen);
+        stem[stemLen] = '\0';
+
+        snprintf(ext, extCap, "%s", dot + 1);
+    } else {
+        snprintf(stem, stemCap, "%s", name);
+        if (extCap > 0) ext[0] = '\0';
+    }
+}
+
+static bool ApplyWildcardSegment(const char *patSeg, const char *srcSeg, char *outSeg, size_t outCap)
+{
+    const char *star = strchr(patSeg, '*');
+    if (!star) {
+        // Literal segment (e.g., "HELLO" or "OLD")
+        if (strlen(patSeg) >= outCap) return false;
+        snprintf(outSeg, outCap, "%s", patSeg);
+        return true;
+    }
+
+    // Wildcard '*' in segment: prefix + srcSeg + suffix
+    size_t prefixLen = (size_t)(star - patSeg);
+    const char *suffix = star + 1;
+    size_t suffixLen = strlen(suffix);
+    size_t srcLen = strlen(srcSeg);
+
+    // Optional: if srcSeg starts with prefix, strip prefix to avoid duplicating it
+    // e.g., src="MYDB1", pat="MYDB*" -> prefix="MYDB", rest="1" -> "MYDB1"
+    const char *insertStr = srcSeg;
+    size_t insertLen = srcLen;
+    if (prefixLen > 0 && strncasecmp(srcSeg, patSeg, prefixLen) == 0 && srcLen >= prefixLen) {
+        insertStr = srcSeg + prefixLen;
+        insertLen = srcLen - prefixLen;
+    }
+
+    if (prefixLen + insertLen + suffixLen >= outCap) {
+        return false;
+    }
+
+    size_t pos = 0;
+    memcpy(outSeg + pos, patSeg, prefixLen);
+    pos += prefixLen;
+    memcpy(outSeg + pos, insertStr, insertLen);
+    pos += insertLen;
+    memcpy(outSeg + pos, suffix, suffixLen);
+    pos += suffixLen;
+    outSeg[pos] = '\0';
+    return true;
+}
+
 /**
  * Maps a matched filename using a destination wildcard pattern (e.g. "*.BAK").
  * Uses the text before '*' as prefix and after '*' as suffix.
  */
-static bool ApplyDestWildcard(const char *dstPattern, const char *srcName, char *outName, size_t outSize) {
-    const char *star = strchr(dstPattern, '*');
-    if (!star) {
+static bool ApplyDestWildcard(const char *dstPat, const char *srcFilename, char *outName, size_t outCap)
+{
+    char srcStem[32], srcExt[16];
+    char patStem[32], patExt[16];
+    char outStem[32], outExt[16];
+
+    SplitNameExt(srcFilename, srcStem, sizeof(srcStem), srcExt, sizeof(srcExt));
+    SplitNameExt(dstPat, patStem, sizeof(patStem), patExt, sizeof(patExt));
+
+    if (!ApplyWildcardSegment(patStem, srcStem, outStem, sizeof(outStem))) {
         return false;
     }
 
-    size_t prefixLen = (size_t)(star - dstPattern);
-    const char *suffix = star + 1;
-
-    // If srcName starts with prefix, strip prefix before applying suffix
-    const char *core = srcName;
-    if (prefixLen > 0 && strncasecmp(srcName, dstPattern, prefixLen) == 0) {
-        core = srcName + prefixLen;
-    }
-
-    // If suffix starts with '.', strip existing extension from core when appending suffix
-    char base[64];
-    snprintf(base, sizeof(base), "%s", core);
-    if (suffix[0] == '.') {
-        char *dot = strrchr(base, '.');
-        if (dot) {
-            *dot = '\0';
+    // If destination pattern had no dot (e.g. "NEWNAME"), keep source extension if appropriate
+    // or leave empty when extension pattern is empty
+    const char *dstDot = strchr(dstPat, '.');
+    if (dstDot) {
+        if (!ApplyWildcardSegment(patExt, srcExt, outExt, sizeof(outExt))) {
+            return false;
         }
+    } else {
+        outExt[0] = '\0';
     }
 
-    char prefixBuf[32];
-    if (prefixLen >= sizeof(prefixBuf)) prefixLen = sizeof(prefixBuf) - 1;
-    memcpy(prefixBuf, dstPattern, prefixLen);
-    prefixBuf[prefixLen] = '\0';
-
-    int written = snprintf(outName, outSize, "%s%s%s", prefixBuf, base, suffix);
-    return (written > 0 && (size_t)written < outSize);
+    if (outExt[0] != '\0') {
+        int n = snprintf(outName, outCap, "%s.%s", outStem, outExt);
+        return (n > 0 && (size_t)n < outCap);
+    } else {
+        int n = snprintf(outName, outCap, "%s", outStem);
+        return (n > 0 && (size_t)n < outCap);
+    }
 }
 
 static void SplitSrcSpec(const char *srcSpec, char *dirPart, size_t dirSize, char *patPart, size_t patSize) {
@@ -227,20 +281,27 @@ static void SplitSrcSpec(const char *srcSpec, char *dirPart, size_t dirSize, cha
  * with copyfile.c so wildcard and path rules stay identical across COPY and DEL.
  */
 
-static bool ShouldSkipEntry(const FILINFO *fno) {
+static bool ShouldSkipEntryEx(const FILINFO *fno, bool allowDirs) {
     if (!fno || fno->fname[0] == '\0') {
         return true;
     }
-    if (fno->fattrib & (AM_DIR | AM_HID | AM_SYS)) {
+    if (strcmp(fno->fname, ".") == 0 || strcmp(fno->fname, "..") == 0) {
         return true;
     }
-    if (strcmp(fno->fname, ".") == 0 || strcmp(fno->fname, "..") == 0) {
+    if (!allowDirs && (fno->fattrib & AM_DIR)) {
+        return true;
+    }
+    if (fno->fattrib & (AM_HID | AM_SYS)) {
         return true;
     }
     if (strncmp(fno->fname, "._", 2) == 0) {
         return true;
     }
     return false;
+}
+
+static bool ShouldSkipEntry(const FILINFO *fno) {
+    return ShouldSkipEntryEx(fno, false);
 }
 
 // ===============================================================
@@ -492,3 +553,140 @@ if (deletedCount) {
     return trsResult;
 }
 
+BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount) {
+    if (renamedCount) {
+        *renamedCount = 0;
+    }
+    if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    char srcDir[128];
+    char srcPat[64];
+    SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
+
+    if (srcPat[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    bool srcWild = HasWildcard(srcPat);
+    bool dstWild = HasWildcard(dstSpec);
+
+    // Non-wildcard rename / move (supports files, directories, and cross-dir moves)
+    if (!srcWild && !dstWild) {
+        char fullSrc[196];
+        char fullDst[196];
+
+        if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
+            return TRS_ILLEGAL_FILENAME;
+        }
+
+        FILINFO dstInfo;
+        FRESULT dstStat = f_stat(dstSpec, &dstInfo);
+        if (EndsWithSep(dstSpec) || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR))) {
+            if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, srcPat)) {
+                return TRS_ILLEGAL_FILENAME;
+            }
+        } else {
+            snprintf(fullDst, sizeof(fullDst), "%s", dstSpec);
+        }
+
+        if (strcmp(fullSrc, fullDst) == 0) {
+            return TRS_OK;
+        }
+
+        BYTE err = FileRename(fullSrc, fullDst);
+        if (err == TRS_OK && renamedCount) {
+            (*renamedCount)++;
+        }
+        return err;
+    }
+
+    // Wildcard rename requires a wildcard pattern in source
+    if (!srcWild) {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    char dstDir[128];
+    char dstPat[64];
+    if (dstWild) {
+        SplitSrcSpec(dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat));
+    } else {
+        snprintf(dstDir, sizeof(dstDir), "%s", dstSpec);
+        snprintf(dstPat, sizeof(dstPat), "%s", "*");
+    }
+
+    bool allowDirs = (strchr(srcPat, '.') == NULL);
+
+    DIR *dir = (DIR *)malloc(sizeof(DIR));
+    FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
+    if (!dir || !fno) {
+        free(dir);
+        free(fno);
+        return TRS_DEVICE_NOT_AVAIL;
+    }
+
+    FRESULT fr = f_opendir(dir, srcDir);
+    if (fr != FR_OK) {
+        free(dir);
+        free(fno);
+        return trans(fr);
+    }
+
+    BYTE trsResult = TRS_OK;
+
+    while (1) {
+        fr = f_readdir(dir, fno);
+        if (fr != FR_OK) {
+            trsResult = trans(fr);
+            break;
+        }
+        if (fno->fname[0] == '\0') {
+            trsResult = TRS_OK;
+            break;
+        }
+        if (ShouldSkipEntryEx(fno, allowDirs)) {
+            continue;
+        }
+
+        if (MatchWildcard(srcPat, fno->fname)) {
+            char fullSrc[196];
+            char fullDst[196];
+            char mappedName[64];
+
+            if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
+                trsResult = TRS_ILLEGAL_FILENAME;
+                break;
+            }
+
+            if (dstWild) {
+                if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
+                    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
+                    trsResult = TRS_ILLEGAL_FILENAME;
+                    break;
+                }
+            } else {
+                if (!JoinPath(fullDst, sizeof(fullDst), dstDir, fno->fname)) {
+                    trsResult = TRS_ILLEGAL_FILENAME;
+                    break;
+                }
+            }
+
+            BYTE renErr = FileRename(fullSrc, fullDst);
+            if (renErr != TRS_OK) {
+                trsResult = renErr;
+                break;
+            }
+
+            if (renamedCount) {
+                (*renamedCount)++;
+            }
+        }
+    }
+
+    f_closedir(dir);
+    free(dir);
+    free(fno);
+
+    return trsResult;
+}

@@ -29,4 +29,21 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
  */
 FRESULT DeleteFileSpec(const char *delSpec, uint32_t *deletedCount);
 
+/**
+ * Renames or moves a single file/directory or a wildcard set of matching files.
+ *
+ * Supports:
+ * - Single-target rename or move (files or directories) via FatFs f_rename(),
+ *   including moving across directories on the single mounted volume.
+ * - Wildcard batch renames (e.g., "*.BAK *.OLD", "MYDB.* MYWORK.*"), restricted
+ *   to files only (subdirectories, hidden/system files, and macOS "._*" files
+ *   are skipped during wildcard scans).
+ *
+ * @param srcSpec       Source path, filename, or wildcard pattern.
+ * @param dstSpec       Destination path, filename, directory, or wildcard pattern.
+ * @param renamedCount  Optional counter updated with the number of items renamed.
+ * @return              TRS_OK (0) on success, or a TRS-* error code on failure.
+ */
+BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount);
+
 #endif //FLOPPY90_FILE_COPY_H

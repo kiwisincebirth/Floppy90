@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <util.h>
 
-#include "filecopy.h"
+#include "file_cmnds.h"
 
 #define	AM_HID_SYS (AM_HID + AM_SYS)	/* Hidden System Files */
 
@@ -762,46 +762,83 @@ byte __not_in_flash_func(CMD_DELETE)(byte step) {
  */
 byte __not_in_flash_func(CMD_RENAME)(byte step)
 {
-	// after getting N Bytes - Signal Busy and defer processing.
 	if (step == 2) return TRS_HARD_BUSY;
 
 	if (step == 10) {
-		char* pszSrc = (char*)&fhd_data2[0];
-		char* pszDest = NULL;
-
-		// 1. Find the space between <src> and <dest>
-		char* pSpace = strchr(pszSrc, ' ');
+		char *buf = (char *)&fhd_data2[0];
+		char *pSpace = strchr(buf, ' ');
 		if (!pSpace) {
 			fhd_error2 = TRS_ILLEGAL_FILENAME;
 			return STATUS_ERROR;
 		}
 
-		// 2. Null-terminate the source string at the space
 		*pSpace = '\0';
+		char *pszSrc = buf;
+		char *pszDest = pSpace + 1;
+		while (*pszDest == ' ') {
+			pszDest++;
+		}
 
-		// 3. The destination starts right after the space
-		// Skip any extra spaces just in case the user typed "REN FILE1    FILE2"
-		pszDest = pSpace + 1;
-		while (*pszDest == ' ') pszDest++;
-
-		// 4. Sanitize both paths
 		char cleanSrc[33];
 		char cleanDest[33];
-		byte driveSrc, driveDest;
+		byte driveSrc = 0;
+		byte driveDest = 0;
 
 		sanitizeTrs80Path(pszSrc, cleanSrc, &driveSrc, 32);
 		sanitizeTrs80Path(pszDest, cleanDest, &driveDest, 32);
 
 		printf("\r\nREN (%s) -> (%s)", cleanSrc, cleanDest);
 
-		// 5. Execute Rename
-		fhd_error2 = FileRename(cleanSrc, cleanDest);
+		uint32_t renamedCount = 0;
+		BYTE renErr = RenameFileSpec(cleanSrc, cleanDest, &renamedCount);
 
-		if (fhd_error2 != FR_OK) {
+		if (renErr != TRS_OK) {
+			fhd_error2 = renErr;
+			if (renamedCount == 0) {
+				return STATUS_ERROR;
+			}
+
+			int errLen = snprintf(
+				buf,
+				FHD_DATA2_SIZE,
+				"%lu File(s) Renamed, with Error %u\r\n",
+				(unsigned long)renamedCount,
+				(unsigned int)renErr
+			);
+			if (errLen < 0) {
+				return STATUS_ERROR;
+			}
+			fhd_size2 = (uint16_t)errLen + 1;
+			return STATUS_OKDATA;
+		}
+
+		fhd_error2 = TRS_OK;
+		int okLen = snprintf(
+			buf,
+			FHD_DATA2_SIZE,
+			"%lu File(s) Renamed.\r\n",
+			(unsigned long)renamedCount
+		);
+		if (okLen < 0) {
 			return STATUS_ERROR;
 		}
+		fhd_size2 = (uint16_t)okLen + 1;
+		return STATUS_OKDATA;
 	}
+
 	return STATUS_OK;
+}
+
+static const char *StripDrivePrefix(const char *path) {
+	if (!path || path[0] == '\0') {
+		return "/";
+	}
+	// Strip "0:" (or any single-digit drive prefix followed by ':') when followed by a path
+	if (path[0] >= '0' && path[0] <= '9' && path[1] == ':') {
+		const char *rest = path + 2;
+		return (*rest != '\0') ? rest : "/";
+	}
+	return path;
 }
 
 /*
@@ -827,24 +864,32 @@ byte __not_in_flash_func(CMD_PWD)(byte step)
 			return STATUS_ERROR;
 		}
 
-//		// Calculate string length, plush 1 byte terminator
-//		fhd_size2 = strlen((char *)fhd_data2);
-//		// 2. Overwrite the '\0' with 0x0D (TRS-80 terminator)
-//		fhd_data2[fhd_size2] = 0x0D;
+		// Strip leading drive prefix (e.g., "0:/TEMP" -> "/TEMP", "0:/" -> "/")
+		char *buf = (char *)fhd_data2;
+		const char *stripped = StripDrivePrefix(buf);
+		if (stripped != buf) {
+			size_t strippedLen = strlen(stripped);
+			memmove(buf, stripped, strippedLen + 1);
+		}
 
 		// 1. Find the current length (excluding null)
-		uint16_t len = strlen((char *)fhd_data2);
+		uint16_t len = (uint16_t)strlen(buf);
+
+		// Bounds guard in case path fills the entire buffer
+		if (len >= sizeof(fhd_data2)) {
+			len = (uint16_t)(sizeof(fhd_data2) - 1);
+		}
 
 		// Debug: Print the actual string
-		printf("\r\nPWD(%s) %i", (char *)&fhd_data2,len+1);
+		printf("\r\nPWD(%s) %u", buf, (unsigned int)(len + 1));
 
 		// 2. Overwrite the '\0' with 0x0D (TRS-80 terminator)
-		fhd_data2[len] = 0x0D;
+		buf[len] = 0x0D;
 
 		// 3. Set the size to include that 0x0D
 		fhd_size2 = len + 1;
 
-		//  data in the buffer for the Z80 to fetch
+		// Data in the buffer for the Z80 to fetch
 		return STATUS_OKDATA;
 	}
 	return STATUS_OK;
