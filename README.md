@@ -26,8 +26,9 @@ Floppy-90 is a Software solution that provides
 - Wait State Generation (optional)
 - Software Debugging Interface
 
-Unlike the Floppy-80 project (which this is based) neither Floppy of Hard Drive
-emulation is provided in any meaningful way.
+Unlike the Floppy-80 project (which this is based) 
+* This firmware requires a Pico 2, an original Pico (RP2040) is **NOT** Supported
+* Neither Floppy of Hard Drive emulation is provided in any meaningful way.
 
 ## Documentation
 
