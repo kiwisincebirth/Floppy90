@@ -32,7 +32,7 @@ Unlike the Floppy-80 project (which this is based)
 
 ## Documentation
 
-TODO
+See the separate User Guide [User Guide](USERGUIDE.md)
 
 ## Software Build
 
@@ -55,7 +55,6 @@ cd build
 # run the make command
 make Floppy90
 ```
-
 This will create Floppy90.uf2 file which you flash to the RPI PICO
 
 Alternately you can use VSCode and the RPI Pico extension.

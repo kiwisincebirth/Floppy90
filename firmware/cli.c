@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <hardware/clocks.h>
+#include <malloc.h>
 
 #include "tusb.h"
 #include "defines.h"
@@ -77,30 +78,44 @@ void hex_dump(const void *data, size_t size) {
     }
 }
 
-//-----------------------------------------------------------------------------
+extern char __StackLimit; /* Set by linker (end of heap) */
+extern char __bss_end__;  /* Set by linker (start of heap) */
+
+static uint32_t GetTotalHeapBytes(void)
+{
+    uintptr_t start = (uintptr_t)&__bss_end__;
+    uintptr_t end   = (uintptr_t)&__StackLimit;
+    return (end > start) ? (uint32_t)(end - start) : 0u;
+}
+
+static uint32_t GetUsedHeapBytes(void) {
+    struct mallinfo info = mallinfo();
+    return info.uordblks;
+}
+
 void FdcProcessStatusRequest(byte print)
 {
-	char szBuf[64];
-	char szLineEnd[4];
+    char szBuf[64];
+    char szLineEnd[4];
 
-	if (print) {
-		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r\n");
-	} else {
-		strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r");
-	}
+    if (print) {
+        strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r\n");
+    } else {
+        strcpy_s(szLineEnd, sizeof(szLineEnd)-1, (char*)"\r");
+    }
 
-	strcpy_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, (char*)"Firmware V ");
-	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, g_pszVersion);
-	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
-	strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
+    strcpy_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, (char*)"Firmware V ");
+    strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, g_pszVersion);
+    strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
+    strcat_s((char*)(g_bFdcResponse), sizeof(g_bFdcResponse)-1, szLineEnd);
 
-	sprintf(szBuf, "Enable FBC Boot  = %d", g_byEnableFDCBoot);
-	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
-	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+    sprintf(szBuf, "Enable FBC Boot  = %d", g_byEnableFDCBoot);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
-	sprintf(szBuf, "Enable FreHD Boot= %d", g_byEnableFreHDBoot);
-	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
-	strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+    sprintf(szBuf, "Enable FreHD Boot= %d", g_byEnableFreHDBoot);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
     sprintf(szBuf, "Enable High RAM  = %d", g_byEnableUpperMem);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
@@ -114,7 +129,19 @@ void FdcProcessStatusRequest(byte print)
     // Get the system clock frequency in Hertz
     uint16_t mhz = clock_get_hz(clk_sys) / 1000000;
 
-    sprintf(szBuf, "Clock Speed   = %u Mhz", mhz );
+    sprintf(szBuf, "Clock Speed   = %u MHz", mhz );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Heap Total    = %lu", (unsigned long)GetTotalHeapBytes() );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Heap Used     = %lu", (unsigned long)GetUsedHeapBytes() );
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "SD SPI Clock  = %d KHz", (int)g_dwSdSpiKhz);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
@@ -131,6 +158,8 @@ void FdcProcessStatusRequest(byte print)
 
     puts((char*)g_bFdcResponse);
 }
+
+//-----------------------------------------------------------------------------
 
 void ListFiles(char* pszFilter)
 {
