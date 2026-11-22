@@ -99,30 +99,6 @@ extern "C" {
 
 	//-----------------------------------------------------------------------------
 
-	// Success No Error
-	#define TRS_OK 0
-	// TRS-80 Error Codes - Error ORed with 0x40
-	#define TRS_DEVICE_NOT_AVAIL ( 8 | 0x40)
-	#define TRS_WRITE_PROTECTED  (15 | 0x40)
-	#define TRS_ILL_FILENUMBER   (15 | 0x40)
-	#define TRS_ILLEGAL_FILENAME (19 | 0x40)
-	#define TRS_FILE_NOT_FOUND   (24 | 0x40)
-	#define TRS_EOF_ENCOUNTERED  (28 | 0x40)
-	#define TRS_ILLEGAL_DRIVENUM (32 | 0x40)
-	// Intential GAP
-	// NEW Errors (previously undefined work down from 63)
-	#define TRS_ACCESS_DENIED	 (58 | 0x40)
-	#define TRS_FILE_EXISTS		 (59 | 0x40)
-	#define TRS_PATH_NOT_FOUND   (60 | 0x40)
-	#define TRS_ILLEGAL_DOS      (61 | 0x40)
-	#define TRS_INTERNAL_DOS     (62 | 0x40)
-	#define TRS_UNKNOWN_ERROR    (63 | 0x40)
-
-	// 29 Record number out of range
-	// À request to read a record within a random access file (see the @POSN vector) provided
-
-
-
 #ifdef __cplusplus
 }
 #endif

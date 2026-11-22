@@ -153,6 +153,30 @@ void FdcProcessStatusRequest(byte print)
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
+    // todo move this functionality back into sd_core for latter reuse in Z80 API.
+    FATFS *fs;
+    DWORD fre_clust, fre_sect, tot_sect;
+
+    /* Get volume information and free clusters of drive 1 */
+    FRESULT res = f_getfree("0:", &fre_clust, &fs);
+    if (res==FR_OK) {
+
+        /* Get total sectors and free sectors */
+        tot_sect = (fs->n_fatent - 2) * fs->csize;
+        fre_sect = fre_clust * fs->csize;
+
+        /* Print the free space (assuming 512 bytes/sector) */
+        // printf("%10lu Mb total drive space.\n%10lu Mb available.\n", tot_sect / 2048, fre_sect / 2048);
+
+        sprintf(szBuf, "Free Space    = %lu Mb", fre_sect / 2048);
+        strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+        strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+        sprintf(szBuf, "Total Space   = %lu Mb", tot_sect / 2048);
+        strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+        strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+    }
+
     sprintf(szBuf, "Files Open    = %d", FileOpenCount() );
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
 

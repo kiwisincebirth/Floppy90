@@ -20,32 +20,15 @@
 #define SD_KHZ_MIN   1000		// SPI clock the card is initialised and mounted at (SD_SPI_KHZ build option)
 #define SD_KHZ_MAX  25000		// highest SPI clock an SD card is allowed to use
 
-volatile BYTE  sd_byCardInialized;
+volatile BYTE  sd_byCardInialized = false;
 volatile DWORD g_dwSdCardPresenceCount;
 volatile DWORD g_dwSdCardMaxPresenceCount;
 volatile DWORD g_dwSdSpiKhz = 5000;		// SD KHZ from HARDWARE.cfg
-
-// info about volume
-static F_SPACE sd_Size;
 
 static BYTE    sd_byCurrentCdState;
 static BYTE    sd_byCardRemoved;
 static BYTE    sd_byPreviousCdState;
 static WORD    sd_wCardInitTries;
-
-////////////////////////////////////////////////////////////////////////////////////
-static FATFS *sd_get_fs_by_name(const char *name)
-{
-    for (size_t i = 0; i < sd_get_num(); ++i)
-	{
-        if (0 == strcmp(sd_get_by_num(i)->pcName, name))
-		{
-			return &sd_get_by_num(i)->fatfs;
-		}
-	}
-
-    return NULL;
-}
 
 //-----------------------------------------------------------------------------
 // returns: 1 => card inserted; 0 => card removed;
@@ -60,41 +43,6 @@ unsigned char get_cd(void)
 BYTE IsSdCardInserted(void)
 {
 	return sd_byCurrentCdState != 0;
-}
-
-////////////////////////////////////////////////////////////////////////////////////
-BYTE sd_getfreespace(void)
-{
-	char*    pszDrive = (char*)"0:";
-    DWORD    fre_clust, fre_sect, tot_sect;
-	uint64_t nSecPerCluster, nFree;
-
-    /* Get volume information and free clusters of drive */
-    FATFS* pfs = sd_get_fs_by_name(pszDrive);
-
-    if (!pfs) return 1;
-
-    FRESULT fr = f_getfree("0:", &fre_clust, &pfs);
-
-    if (FR_OK != fr) return 1;
-
-    /* Get total sectors and free sectors */
-    tot_sect = (pfs->n_fatent - 2) * pfs->csize;
-    fre_sect = fre_clust * pfs->csize;
-
-   	sd_Size.nSectorsTotal  = tot_sect;
-   	sd_Size.nSectorsFree   = fre_sect;
-
-    /* assuming 512 bytes/sector */
-   	sd_Size.nSectorSize    = 512;
-
-	sd_Size.nClustersTotal = sd_Size.nSectorsTotal / pfs->csize;
-	sd_Size.nClustersFree  = sd_Size.nSectorsFree / pfs->csize;
-	sd_Size.nClustersUsed  = sd_Size.nClustersTotal - sd_Size.nClustersFree;
-	sd_Size.nClustersBad   = 0;
-	sd_Size.nClusterSize   = pfs->csize;
-
-	return 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -118,18 +66,6 @@ void SdApplyConfiguredClock(void)
 ////////////////////////////////////////////////////////////////////////////////////
 void MountSdCard(void)
 {
-	FRESULT fr;
-	int     nRet;
-
-	sd_Size.nSectorsTotal  = 0;
-	sd_Size.nSectorsFree   = 0;
-	sd_Size.nSectorSize    = 0;
-	sd_Size.nClustersTotal = 0;
-	sd_Size.nClustersFree  = 0;
-	sd_Size.nClustersUsed  = 0;
-	sd_Size.nClustersBad   = 0;
-	sd_Size.nClusterSize   = 0;
-
 	if ( get_cd() ) { // if card inserted
 
 		sd_byCardInialized = FALSE;
@@ -143,19 +79,16 @@ void MountSdCard(void)
 
 			if (!sd_init_driver()) return;
 
-			char*  pszDrive = (char*)"0:";
-			FATFS* pfs = sd_get_fs_by_name(pszDrive);
+			// char*  pszDrive = (char*)"0:";
+			FATFS* pfs = &sd_get_by_num(0)->fatfs;
 
 			if (!pfs) return;
 
-			fr = f_mount(pfs, "0:", 1);
+			FRESULT fr = f_mount(pfs, "0:", 1);
 
 			if (fr == FR_OK) {
-				nRet = sd_getfreespace();
-				if (nRet == 0) {
-					sd_byCardInialized = TRUE;
-					SdApplyConfiguredClock();
-				}
+				sd_byCardInialized = TRUE;
+				SdApplyConfiguredClock();
 			}
 		}
 

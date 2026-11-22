@@ -131,21 +131,6 @@ typedef unsigned short     	word;
 #define DIR_COLUMNS 3
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// typedefs
-
-typedef struct {
-   uint64_t nSectorsTotal;
-   uint64_t nSectorsFree;
-   uint64_t nSectorSize;
-
-   uint32_t nClustersTotal;
-   uint32_t nClustersFree;
-   uint32_t nClustersUsed;
-   uint32_t nClustersBad;
-   uint32_t nClusterSize;
-} F_SPACE;
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
 // enumerations
 
 enum {
@@ -155,9 +140,31 @@ enum {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// global variables
+// Error Message Handling
 
+// Success No Error TRS-OK and FR_OK (FatFs) are the Same
+#define TRS_OK FR_OK
+// TRS-80 Error Codes - Error ORed with 0x40
+#define TRS_DEVICE_NOT_AVAIL ( 8 | 0x40)
+#define TRS_WRITE_PROTECTED  (15 | 0x40)
+#define TRS_ILL_FILENUMBER   (15 | 0x40)
+#define TRS_ILLEGAL_FILENAME (19 | 0x40)
+#define TRS_FILE_NOT_FOUND   (24 | 0x40)
+#define TRS_EOF_ENCOUNTERED  (28 | 0x40)
+// 29 Record number out of range
+// À request to read a record within a random access file (see the @POSN vector) provided
+#define TRS_ILLEGAL_DRIVENUM (32 | 0x40)
+//
+// Intentional GAP
+// NEW Errors (previously undefined work down from 63)
+#define TRS_ACCESS_DENIED	 (58 | 0x40)
+#define TRS_FILE_EXISTS		 (59 | 0x40)
+#define TRS_PATH_NOT_FOUND   (60 | 0x40)
+#define TRS_ILLEGAL_DOS      (61 | 0x40)
+#define TRS_INTERNAL_DOS     (62 | 0x40)
+#define TRS_UNKNOWN_ERROR    (63 | 0x40)
 
+// Error Translation
 static BYTE resultTranslation[] = {
 	FR_OK,					/* (0) Succeeded */
 	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
