@@ -13,7 +13,6 @@ Files are placed in the "SYS", folder.
 
 This file contains global configuration settings. The file and settings are
 optional, and all have meaningful defaults The settings are:
-* WAIT - Used to enable / disable wait states 1 = enabled; 0 = disabled (default)
 
 e.g.
 ```
@@ -79,9 +78,9 @@ floppy disk controller actions to complete before continuing.
 Typically, wait states should not be required.
 
 Wait states are useful for overclocked CPU's where the CPU outperforms
-the Floppy emulation, which is optimised for normal CPU speed.
+the emulation, which is optimised for normal CPU speed.
 The issue with wait states is they are known to disrupt
-critical timed operations, such as formatting a floppy disk.
+critical timed operations, such as cassette loading.
 
 ### Interrupts
 
