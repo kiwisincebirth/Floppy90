@@ -391,6 +391,8 @@ void SysProcessConfigEntry(char szLabel[], char* psz) {
 		g_byEnableUpperMem = atoi(psz);
 	} else if (stricmp(szLabel, "EnableWaitStates") == 0) {
 		g_byEnableWaitStates = atoi(psz);
+	} else if (strcmp(szLabel, "SDKHZ") == 0) {
+		g_dwSdSpiKhz = atoi(psz);
 	}
 }
 
@@ -422,4 +424,7 @@ void SysInit(void)
 	}
 
 	FileClose(f);
+
+	SdApplyConfiguredClock();	// raise the SD card clock to SDKHZ (if set)
+
 }

@@ -8,6 +8,8 @@
 #include "defines.h"
 #include "sd_core.h"
 
+#include <sd_spi.h>
+
 #include "ff.h"
 #include "hw_config.h"
 #include "sd_card.h"
@@ -15,9 +17,13 @@
 
 ////////////////////////////////////////////////////////////////////////////////////
 
+#define SD_KHZ_MIN   1000		// SPI clock the card is initialised and mounted at (SD_SPI_KHZ build option)
+#define SD_KHZ_MAX  25000		// highest SPI clock an SD card is allowed to use
+
 volatile BYTE  sd_byCardInialized;
 volatile DWORD g_dwSdCardPresenceCount;
 volatile DWORD g_dwSdCardMaxPresenceCount;
+volatile DWORD g_dwSdSpiKhz = 5000;		// SD KHZ from HARDWARE.cfg
 
 // info about volume
 static F_SPACE sd_Size;
@@ -66,17 +72,11 @@ BYTE sd_getfreespace(void)
     /* Get volume information and free clusters of drive */
     FATFS* pfs = sd_get_fs_by_name(pszDrive);
 
-    if (!pfs)
-	{
-        return 1;
-    }
+    if (!pfs) return 1;
 
     FRESULT fr = f_getfree("0:", &fre_clust, &pfs);
 
-    if (FR_OK != fr)
-	{
-        return 1;
-    }
+    if (FR_OK != fr) return 1;
 
     /* Get total sectors and free sectors */
     tot_sect = (pfs->n_fatent - 2) * pfs->csize;
@@ -95,6 +95,24 @@ BYTE sd_getfreespace(void)
 	sd_Size.nClusterSize   = pfs->csize;
 
 	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+// The card is always initialised and mounted at the boot speed (SD_SPI_KHZ, 5 MHz by default),
+// so system.cfg can be read on any card. Once system.cfg has been read, SDKHZ raises (or lowers)
+// the clock for normal operation. A card that is inserted later is handled the same way.
+void SdApplyConfiguredClock(void)
+{
+	sd_card_t* pSD = sd_get_by_num(0);
+
+	if (pSD == NULL) return;
+
+	if (g_dwSdSpiKhz < SD_KHZ_MIN) g_dwSdSpiKhz = SD_KHZ_MIN;
+	if (g_dwSdSpiKhz > SD_KHZ_MAX) g_dwSdSpiKhz = SD_KHZ_MAX;
+
+	pSD->spi->baud_rate = g_dwSdSpiKhz * 1000;
+
+	sd_spi_go_high_frequency(pSD);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -119,6 +137,10 @@ void MountSdCard(void)
 		if (sd_wCardInitTries < 5) {
 			++sd_wCardInitTries;
 
+			// initialise the card at the boot speed
+			sd_card_t* pSD = sd_get_by_num(0);
+			if (pSD != NULL) pSD->spi->baud_rate = SD_KHZ_MIN * 1000;
+
 			if (!sd_init_driver()) return;
 
 			char*  pszDrive = (char*)"0:";
@@ -132,6 +154,7 @@ void MountSdCard(void)
 				nRet = sd_getfreespace();
 				if (nRet == 0) {
 					sd_byCardInialized = TRUE;
+					SdApplyConfiguredClock();
 				}
 			}
 		}
