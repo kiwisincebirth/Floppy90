@@ -142,3 +142,14 @@ If an ISR uses the $3000 trampoline while the main program is mid-trampoline, th
 ### Direct Memory Access
 
 Range $3000–$33FF is no longer general-purpose memory; it must be treated strictly as the trampoline area.
+
+## Reference
+
+| Address     |                                  |
+|-------------|----------------------------------|
+| 3000 - 3400 | Banked Memory Entry Points       |
+| 3400 - 3600 | Banked Code Memory (swappable)   |
+| 3600 - 37E0 | Banked Data Memory (swappable)   |
+| 37F0        | Banked Code Memory Page Register |
+| 37F1        | Banked Data Memory Page Register |
+
