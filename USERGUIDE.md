@@ -7,47 +7,17 @@ An SD Card (FAT formatted) is required to contain the disk images, and configura
 Configuration of Floppy90 is performed with the placement of
 files on the SD-Card inserted in its card reader.
 
-Files are placed in the "SYS", folder.
+Configuration is primarily in the file `/SYS/HARDWARE.cfg`.
 
-### SYS/HARDWARE.cfg
+## Features
 
-This file contains global configuration settings. The file and settings are
-optional, and all have meaningful defaults The settings are:
+### File Services API's
 
-e.g.
-```
-# PICO Virtual RAM $3000-$37EF
-EnablePicoRAM=1
+This feature is enabled by default. and forms the primary function of Floppy90.
 
-# Floppy Boot Block, used for normal booting.
-EnableFDCBoot=1
+For more information please See [File Services API Guide](./APIGUIDE.md)
 
-# FreHD Boot Block, if using FreHD auto-boot
-# Note: Generally floppy boot is preferred
-EnableFreHDBoot=0
-
-# Enable 32 KB Hi RAM, if running on 16KB
-EnableHighRAM=0
-
-# Enable use of wait states for fast CPU's
-EnableWaitStates=0
-
-#Enable the Generation of 40Hz interrupts
-EnableInterrupts=1
-
-# SD Card SPI Clock speed in Khz. (1000-25000)  
-SDKHZ=5000
-```
-
-### Pico RAM
-
-An important aspect of this system is ability to provide 256KB of banked RAM.
-This is achieved by using the RP2350's internal RAM and exposing this to the Z80 CPU
-in a banked manner at location `$3000-$37FF`.
-
-For more information See the [Virtual Memory](VIRTUAL.md) section.
-
-### Floppy Boot Block
+### Floppy Disk Boot Block
 
 Enabling this feature will allow the Floppy90 to expose a boot block
 compatible with Model 1 Floppy Drive Controllers
@@ -58,18 +28,80 @@ on the SD card, in a file called `/SYS/BOOT.SYS`
 When a Level 2 machine boots this block will be serviced by the Floppy90
 and the boot process will execute the code at address `$4200`
 
+This feature exposes the following registers.
+
+| Address     |                                  |
+|-------------|----------------------------------|
+| 37EC        | FDC Command Status               |
+| 37EF        | FDC Data Register                |
+
+To enable this feature, (on by default) the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
+
+```
+EnableFDCBoot=1
+```
+
 ### FreHD Boot Block
 
 Enabling this feature will allow the Floppy90 to expose a boot block
 compatible with the FreHD auto Boot Rom. The boot block provided is
 preconfigured and allows the next stage (typically) of a FreHD boot.
 
-The boot block will look for a file called `FREHD.ROM` (in root directory)
+The boot block will look for a CMD file called `/FREHD.ROM` (in the root directory)
 load and execute this.
 
-### High RAM
+To enable this feature, (off by default) the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
 
-Used to enable / disable 32KB Hi Ram RAM at address $8000 to $FFFF
+```
+EnableFreHDBoot=1
+```
+
+### Banked Memory (256k)
+
+An important aspect of this system is ability to provide 256KB of banked RAM.
+This is achieved by using the RP2350's internal RAM and exposing this to the Z80 CPU
+in a banked manner at location `$3000-$37FF`.
+
+To enable this feature, (on by default) the following line must be added to the 
+`/SYS/HARDWARE.cfg` file on the SD card.
+
+```
+EnablePicoRAM=1
+```
+
+For more information See the [Virtual Memory](VIRTUAL.md) section.
+
+### 32kb Upper (48kB) RAM
+
+Provides 32KB of HI RAM at address $8000 to $FFFF. This is normally provided
+by an Expansion Interface, upgrading a machine from 32KB to 48Kb
+
+To enable this feature, (off by default) the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
+
+```
+EnableHighRAM=1
+```
+
+### Interrupts for RTC
+
+Enables the generation of 40Hz interrupts. These are compatible with
+the Model 1 Expansion Interface interrupts. This feature exposes the following registers.
+
+| Address     |                                  |
+|-------------|----------------------------------|
+| 37E0        | Read and Reset RTC Interrupt     |
+
+To enable this feature, (on by default) the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
+
+```
+EnableInterrupts=1
+```
+
+## Other Configuration
 
 ### Wait States
 
@@ -90,25 +122,30 @@ Wait state should not be confused with the BUSY signal when accessing
 files on the SD card. The Z80 is still required to poll for the completion
 of the operation, and detection of success / failure of that operation
 
-### Interrupts
+To enable this feature, (off by default) the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
 
-Enables the generation of 40Hz interrupts. These are compatible with
-the Model 1 Expansion Interface interrupts
+```
+EnableWaitStates=0
+```
 
 ### SDKHZ
 
-SD card SPI clock in kHz, e.g. SDKHZ=12500. The card is always mounted and system.cfg read at the
-firmware's boot speed (5000 by default); the clock is then changed to this value. Accepted range is 1000 to 25000.
-Not all cards work at higher speeds (a card that is too slow for the setting can make the Floppy80 lock up), so
-increase it in steps, e.g. 8333, 10000, 12500, and test with your card. If it is missing, the boot speed is kept
+Allows setting the SD card SPI clock, this allows access to the card to be improved 
+(by setting it higher), at the possible detriment to reliability.
 
-## File Services API
+The card is always first mounted a speed of 1000 Khz, then the configuration file read,
+then  the clock is set to the configured value. Accepted range is 1000 to 25000.
 
-The primary purposes of Floppy90 is the provision of a Fileservices API
-compatible with the FreHD, but an extension is provided to allow for multiple
-files to be open at once.
+Not all cards work at higher speeds (a card that is too slow for the setting can 
+make the Floppy90 lock up), so increase it in steps, and test with your card. 
 
--tbc-
+To control this feature, the following line must be added to the
+`/SYS/HARDWARE.cfg` file on the SD card.
+
+```
+SDKHZ=5000
+```
 
 ## Debugging
 

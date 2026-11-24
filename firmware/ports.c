@@ -1519,7 +1519,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_NEWER_RENAME]		= CMD_RENAME,
 	[TRS_NEWER_PWD]			= CMD_PWD,
 
-	// Fle Handling Commands ( $20 - $2F )
+	// File Handling Commands ( $20 - $2F )
 	[TRS_FILE_READ]			= CMD_FILE_READ,
 	[TRS_FILE_WRITE]		= CMD_FILE_WRITE,
 	[TRS_FILE_SOF]			= CMD_FILE_POSITION,
