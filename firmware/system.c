@@ -406,7 +406,7 @@ void SysInit(void)
 	char* psz;
 
 	// read the hardware configuration file to load on init Globals
-	TFILE* f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
+	TFILE* f = FileOpenByName("/SYS/hardware.cfg", 0, FA_READ);
 
 	if (f == NULL) return;
 
