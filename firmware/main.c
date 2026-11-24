@@ -20,6 +20,7 @@
 #include "z80_bus.h"
 #include "memory.h"
 #include "file.h"
+#include "file_cmnds.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // GPIO NET        IN   OUT
@@ -116,6 +117,7 @@ int main()
     SysInit();			// Init State - Hardware.CFG File
 	MemInit();			// init Paged Memory State
 	LoadFDCBootBlock(); // Loads BOOT.SYS - FDC boot block
+	trs80_load_assign_cfg(); // Loads ASSIGN configuration
 	PortsInit();		// currently does nothing
     InitCli();			// init some variables
 

@@ -7,6 +7,41 @@
 #include <stdint.h>
 #include "ff.h"
 
+// Copy Buffer Size
+#define COPY_CHUNK_SIZE 4096
+
+// Maximums for String names and paths
+#define TRS80_NAME_MAX 64
+#define TRS80_PATH_MAX 128
+
+typedef struct {
+    char sanitized[TRS80_NAME_MAX];     /* Uppercased, legacy-converted name/pattern (no :N) */
+    char primary[TRS80_PATH_MAX];       /* Mapped /:N/ + sanitized, or sanitized if :0/unmapped */
+    char secondary[TRS80_PATH_MAX];     /* "/USR/" + sanitized when eligible */
+    uint8_t driveId;                    /* Validated 0..9 (0 if absent or out of range) */
+    bool hasExplicitSlash;              /* True if raw input had '/' before legacy conversion */
+    bool hasMappedDir;                  /* True if driveId 1..9 had a non-empty configured path */
+    bool hasSecondary;                  /* True if secondary (/USR/...) is populated & eligible */
+    bool truncated;                     /* True if any output buffer hit its capacity limit */
+} Trs80PathResult;
+
+/* Load Configuration */
+void trs80_load_assign_cfg(void);
+
+/* Save Configuration */
+bool trs80_save_assign_cfg(void);
+
+/* Returns mapped path string for driveId 1..9, or NULL if unmapped / out of range */
+const char *trs80_get_mapped_dir(uint8_t driveId);
+
+/* Optional setter for config loader; enforces index 0 == NULL and range 1..9 */
+void trs80_set_mapped_dir(uint8_t driveId, const char *dirPath);
+
+/* Single entry point for callers: parses token, resolves :1..:9, builds /USR/ fallback */
+void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out);
+
+// =============================
+
 /**
  * Copies a single file from srcPath to dstPath.
  * Returns FR_OK on success, or a FatFs FRESULT error code.

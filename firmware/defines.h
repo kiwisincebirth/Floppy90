@@ -157,6 +157,8 @@ enum {
 //
 // Intentional GAP
 // NEW Errors (previously undefined work down from 63)
+#define TRS_TOO_MANY_FILES	 (56 | 0x40)
+#define TRS_DEN_FILE_OPEN	 (57 | 0x40)
 #define TRS_ACCESS_DENIED	 (58 | 0x40)
 #define TRS_FILE_EXISTS		 (59 | 0x40)
 #define TRS_PATH_NOT_FOUND   (60 | 0x40)
@@ -182,7 +184,7 @@ static BYTE resultTranslation[] = {
 	FR_NO_FILESYSTEM,		/* (13) There is no valid FAT volume */
 	FR_MKFS_ABORTED,		/* (14) The f_mkfs() aborted due to any problem */
 	FR_TIMEOUT,				/* (15) Could not get a grant to access the volume within defined period */
-	FR_LOCKED,				/* (16) The operation is rejected according to the file sharing policy */
+	TRS_DEN_FILE_OPEN,		/* (16) The operation is rejected according to the file sharing policy */
 	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
 	FR_TOO_MANY_OPEN_FILES,	/* (18) Number of open files > FF_FS_LOCK */
 	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */

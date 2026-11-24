@@ -14,8 +14,413 @@
 #include "ff.h"
 #include "file.h"
 
-// Copy Buffer Size
-#define COPY_CHUNK_SIZE 4096
+
+/* Index 0 is always NULL; indices 1..9 hold configured directory paths */
+static char s_mappedDirStorage[10][TRS80_PATH_MAX];
+
+static const char *s_mappedDirs[10] = {
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+};
+
+
+/**
+ * Loads TRS-80 drive assignment mappings from the system assignment
+ * configuration file.
+ *
+ * Reads `/SYS/ASSIGN.CFG`, ignores blank lines and comment lines beginning
+ * with `;` or `#`, and processes assignment entries in the form `N:path`,
+ * where `N` is a drive number from 1 through 9. Leading and trailing
+ * whitespace is ignored. An entry with no path clears the mapped directory
+ * for the specified drive.
+ */
+void trs80_load_assign_cfg(void)
+{
+    char szLine[TRS80_PATH_MAX + 8];
+
+    TFILE *f = FileOpenByName("/SYS/ASSIGN.CFG", FA_READ);
+    if (f == NULL || !f->byIsOpen) {
+        if (f) FileClose(f);
+        return;
+    }
+
+    while (FileReadLine(f, szLine, (int)(sizeof(szLine) - 1)) >= 0) {
+        char *p = szLine;
+
+        /* Trim trailing CR/LF/spaces */
+        size_t len = strlen(p);
+        while (len > 0 && (p[len - 1] == '\r' || p[len - 1] == '\n' ||
+                           p[len - 1] == ' '  || p[len - 1] == '\t')) {
+            p[--len] = '\0';
+                           }
+
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+
+        if (*p == '\0' || *p == ';' || *p == '#') {
+            continue;
+        }
+
+        if (p[0] >= '1' && p[0] <= '9' && p[1] == ':') {
+            uint8_t driveId = (uint8_t)(p[0] - '0');
+            const char *path = p + 2;
+            while (*path == ' ' || *path == '\t') {
+                path++;
+            }
+
+            if (*path == '\0') {
+                trs80_set_mapped_dir(driveId, NULL);
+            } else {
+                trs80_set_mapped_dir(driveId, path);
+            }
+        }
+    }
+
+    FileClose(f);
+}
+
+/**
+ * Saves the current TRS-80 drive assignment mappings to the system assignment
+ * configuration file.
+ *
+ * Recreates `/SYS/ASSIGN.CFG` and writes one entry for each mapped drive from
+ * 1 through 9. Drives without a mapped directory are omitted. Each saved entry
+ * uses the `N:path` format and is terminated with CRLF.
+ *
+ * @return true if the configuration file was opened, written, synchronized,
+ * and closed successfully; false if the file could not be opened or any write
+ * or synchronization operation failed.
+ */
+bool trs80_save_assign_cfg(void)
+{
+    TFILE *f = FileOpenByName("/SYS/ASSIGN.CFG", FA_CREATE_ALWAYS | FA_WRITE);
+    if (f == NULL || !f->byIsOpen) {
+        if (f) FileClose(f);
+        return false;
+    }
+
+    bool ok = true;
+    for (uint8_t d = 1; d <= 9; d++) {
+        const char *path = trs80_get_mapped_dir(d);
+        if (path != NULL && path[0] != '\0') {
+            char line[TRS80_PATH_MAX + 8];
+            int n = snprintf(line, sizeof(line), "%u:%s\r\n", (unsigned int)d, path);
+            if (n > 0) {
+                UINT bw = 0;
+                FRESULT fr = f_write(&f->f, line, (UINT)n, &bw);
+                if (fr != FR_OK || bw != (UINT)n) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (f_sync(&f->f) != FR_OK) {
+        ok = false;
+    }
+
+    FileClose(f);
+    return ok;
+}
+
+// ============================
+
+static uint8_t sanitize_drive_id(int rawDrive)
+{
+    if (rawDrive < 1 || rawDrive > 9) {
+        return 0;
+    }
+    return (uint8_t)rawDrive;
+}
+
+const char *trs80_get_mapped_dir(uint8_t driveId)
+{
+    if (driveId < 1 || driveId > 9) {
+        return NULL;
+    }
+    return s_mappedDirs[driveId];
+}
+
+static const char *get_mapped_dir(uint8_t driveId)
+{
+    uint8_t validId = sanitize_drive_id((int)driveId);
+    if (validId == 0) {
+        return NULL;
+    }
+    if (s_mappedDirs[validId] == NULL || s_mappedDirs[validId][0] == '\0') {
+        return NULL;
+    }
+    return s_mappedDirs[validId];
+}
+
+static bool append_str(char *dst, size_t dstSize, size_t *pos, const char *src, bool *truncated)
+{
+    if (dstSize == 0) {
+        if (truncated) *truncated = true;
+        return false;
+    }
+    while (*src != '\0') {
+        if (*pos + 1 >= dstSize) {
+            if (truncated) *truncated = true;
+            dst[*pos] = '\0';
+            return false;
+        }
+        dst[(*pos)++] = *src++;
+    }
+    dst[*pos] = '\0';
+    return true;
+}
+
+static void join_dir_and_name(
+    const char *prefix,
+    const char *name,
+    bool trimTrailingSlashOnEmptyName,
+    char *out,
+    size_t outSize,
+    bool *truncated)
+{
+    size_t pos = 0;
+    if (outSize == 0) {
+        if (truncated) *truncated = true;
+        return;
+    }
+    out[0] = '\0';
+
+    if (prefix == NULL || prefix[0] == '\0') {
+        append_str(out, outSize, &pos, name ? name : "", truncated);
+        return;
+    }
+
+    /* Copy prefix, stripping trailing '/' unless prefix is "/" */
+    size_t pLen = strlen(prefix);
+    while (pLen > 1 && prefix[pLen - 1] == '/') {
+        pLen--;
+    }
+
+    for (size_t i = 0; i < pLen; i++) {
+        if (pos + 1 >= outSize) {
+            if (truncated) *truncated = true;
+            out[pos] = '\0';
+            return;
+        }
+        out[pos++] = prefix[i];
+    }
+    out[pos] = '\0';
+
+    const char *cleanName = name ? name : "";
+    while (*cleanName == '/') {
+        cleanName++;
+    }
+
+    if (*cleanName != '\0') {
+        if (pos == 0 || out[pos - 1] != '/') {
+            if (!append_str(out, outSize, &pos, "/", truncated)) {
+                return;
+            }
+        }
+        append_str(out, outSize, &pos, cleanName, truncated);
+    } else if (!trimTrailingSlashOnEmptyName) {
+        if (pos == 0 || out[pos - 1] != '/') {
+            append_str(out, outSize, &pos, "/", truncated);
+        }
+    }
+}
+
+static void apply_legacy_slash_extension(char *buf, size_t len, int lastSlashIdx)
+{
+    if (lastSlashIdx < 0 || (size_t)lastSlashIdx >= len) {
+        return;
+    }
+
+    bool dotInFinalSegment = false;
+    for (size_t i = (size_t)lastSlashIdx + 1; i < len; i++) {
+        if (buf[i] == '.') {
+            dotInFinalSegment = true;
+            break;
+        }
+    }
+
+    if (!dotInFinalSegment) {
+        int charsAfterSlash = ((int)len - 1) - lastSlashIdx;
+        if (charsAfterSlash > 0 && charsAfterSlash <= 3) {
+            buf[lastSlashIdx] = '.';
+        }
+    }
+}
+
+static bool should_truncate_password_dot(
+    const char *src,
+    int sIdx,
+    int maxLen,
+    const char *dest,
+    int dIdx,
+    int lastSlashIdx,
+    bool hasDot)
+{
+    bool afterSlashExt = (lastSlashIdx != -1 && ((dIdx - 1 - lastSlashIdx) <= 3));
+    if (!hasDot && !afterSlashExt) {
+        return false;
+    }
+    if (dIdx <= 0 || dest[dIdx - 1] == '.') {
+        return false;
+    }
+
+    int lookAhead = 0;
+    while ((sIdx + lookAhead) < maxLen &&
+           isalnum((unsigned char)src[sIdx + lookAhead])) {
+        lookAhead++;
+    }
+    return (lookAhead >= 4);
+}
+
+static void parse_raw_token(
+    const char *src,
+    int maxLen,
+    char *sanitized,
+    size_t sanitizedSize,
+    uint8_t *outDriveId,
+    bool *outHasExplicitSlash,
+    bool *outTruncated)
+{
+    int sIdx = 0;
+    size_t dIdx = 0;
+    int lastSlashIdx = -1;
+    bool hasDot = false;
+    uint8_t driveId = 0;
+    bool hasSlash = false;
+
+    sanitized[0] = '\0';
+
+    if (src == NULL || maxLen <= 0 || sanitizedSize == 0) {
+        *outDriveId = 0;
+        *outHasExplicitSlash = false;
+        return;
+    }
+
+    while (sIdx < maxLen) {
+        unsigned char c = (unsigned char)src[sIdx++];
+
+        if (c == 0x0D || c == 0x03 || c == 0x00) {
+            break;
+        }
+
+        if (c == ':') {
+            if (sIdx < maxLen && isdigit((unsigned char)src[sIdx])) {
+                driveId = sanitize_drive_id(src[sIdx] - '0');
+            }
+            break;
+        }
+
+        if (c == '.') {
+            if (should_truncate_password_dot(
+                    src, sIdx, maxLen, sanitized, (int)dIdx, lastSlashIdx, hasDot)) {
+                break;
+            }
+        }
+
+        if (isalnum(c) || c == '/' || c == '.' || c == '*') {
+            char up = (char)toupper(c);
+            if (up == '/') {
+                hasSlash = true;
+                lastSlashIdx = (int)dIdx;
+                hasDot = false;
+            } else if (up == '.') {
+                hasDot = true;
+            }
+
+            if (dIdx + 1 < sanitizedSize) {
+                sanitized[dIdx++] = up;
+                sanitized[dIdx] = '\0';
+            } else {
+                *outTruncated = true;
+            }
+        }
+    }
+
+    apply_legacy_slash_extension(sanitized, dIdx, lastSlashIdx);
+
+    *outDriveId = driveId;
+    *outHasExplicitSlash = hasSlash;
+}
+
+void trs80_set_mapped_dir(uint8_t driveId, const char *dirPath)
+{
+    /* Slot 0 is permanently NULL; only 1..9 are valid */
+    s_mappedDirs[0] = NULL;
+    uint8_t validId = sanitize_drive_id((int)driveId);
+    if (validId == 0) {
+        return;
+    }
+
+    if (dirPath == NULL || dirPath[0] == '\0') {
+        s_mappedDirStorage[validId][0] = '\0';
+        s_mappedDirs[validId] = NULL;
+        return;
+    }
+
+    size_t len = strlen(dirPath);
+    if (len >= TRS80_PATH_MAX) {
+        len = TRS80_PATH_MAX - 1;
+    }
+    memcpy(s_mappedDirStorage[validId], dirPath, len);
+    s_mappedDirStorage[validId][len] = '\0';
+    s_mappedDirs[validId] = s_mappedDirStorage[validId];
+}
+
+void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
+{
+    if (out == NULL) {
+        return;
+    }
+
+    memset(out, 0, sizeof(*out));
+    s_mappedDirs[0] = NULL;
+
+    parse_raw_token(
+        src,
+        maxLen,
+        out->sanitized,
+        sizeof(out->sanitized),
+        &out->driveId,
+        &out->hasExplicitSlash,
+        &out->truncated);
+
+    const char *mapped = get_mapped_dir(out->driveId);
+    if (mapped != NULL) {
+        out->hasMappedDir = true;
+        join_dir_and_name(
+            mapped,
+            out->sanitized,
+            true,
+            out->primary,
+            sizeof(out->primary),
+            &out->truncated);
+    } else {
+        out->hasMappedDir = false;
+        size_t pos = 0;
+        append_str(out->primary, sizeof(out->primary), &pos, out->sanitized, &out->truncated);
+    }
+
+    /* /USR/ fallback applies only to bare names with no explicit :1..:9 or / path */
+    if (out->driveId == 0 && !out->hasExplicitSlash && out->sanitized[0] != '\0') {
+        join_dir_and_name(
+            "/USR",
+            out->sanitized,
+            false,
+            out->secondary,
+            sizeof(out->secondary),
+            &out->truncated);
+        out->hasSecondary = (out->secondary[0] != '\0');
+    } else {
+        out->hasSecondary = false;
+        out->secondary[0] = '\0';
+    }
+}
+
+// ========================================================
+// COPY SINGLE FILE
+// ========================================================
 
 // Copy Buffer
 static uint8_t s_copyBuf[COPY_CHUNK_SIZE] __attribute__((aligned(4)));
@@ -93,8 +498,6 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
     return FR_OK;
 }
 
-// ---------------------------------------------
-// ---------------------------------------------
 // ---------------------------------------------
 
 static bool MatchWildcard(const char *pattern, const char *str) {
@@ -300,7 +703,9 @@ static bool ShouldSkipEntry(const FILINFO *fno, bool allowDirs) {
     return false;
 }
 
-// ===============================================================
+// ========================================================
+// COPY FILE(s)
+// ========================================================
 
 /**
  * Copies one or more files matching srcSpec to dstSpec.
@@ -441,7 +846,9 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     return fr;
 }
 
-// ===============================================================
+// ========================================================
+// DELETE FILE(s)
+// ========================================================
 
 /**
  * Deletes one or more files matching delSpec.
@@ -548,6 +955,10 @@ if (deletedCount) {
 
     return trsResult;
 }
+
+// ========================================================
+// RENAME FILE(s)
+// ========================================================
 
 BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount) {
     if (renamedCount) {
@@ -686,3 +1097,5 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
 
     return trsResult;
 }
+
+// =================================================

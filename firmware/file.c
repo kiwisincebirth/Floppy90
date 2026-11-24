@@ -77,6 +77,7 @@ TFILE* findUnusedFile()
 			fInfo->bytesReadWritten = 0;
 			fInfo->lrl = 0;
 			fInfo->driveId = 0;
+			memset(fInfo->originalFCB, 0, sizeof(fInfo->originalFCB));
 			return fInfo;
 		}
 	}
@@ -126,7 +127,7 @@ TFILE* findOpenFile( BYTE fileId )
 
 //-----------------------------------------------------------------------------
 
-TFILE* FileOpenByName(const char* pszFileName, BYTE driveNum, BYTE byMode)
+TFILE* FileOpenByName(const char *pszFileName, BYTE byMode)
 {
 	TFILE *fInfo = findUnusedFile();
 	if (!fInfo) return NULL; // Always check for exhaustion!
