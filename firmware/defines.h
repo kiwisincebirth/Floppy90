@@ -196,9 +196,11 @@ static BYTE __inline trans(FRESULT result) {
 // counter for real time clock (RTC).
 
 // configuration Items
+extern volatile byte     g_byEnablePicoRAM;
 extern volatile byte     g_byEnableUpperMem;
 extern volatile byte     g_byEnableFDCBoot;
 extern volatile byte     g_byEnableFreHDBoot;
+extern volatile byte     g_byEnableInterrupts;
 extern volatile byte     g_byEnableWaitStates;
 
 // Interrupts

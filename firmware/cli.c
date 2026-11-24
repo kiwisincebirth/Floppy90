@@ -117,7 +117,15 @@ void FdcProcessStatusRequest(byte print)
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 
+    sprintf(szBuf, "Enable Pico RAM  = %d", g_byEnablePicoRAM);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
     sprintf(szBuf, "Enable High RAM  = %d", g_byEnableUpperMem);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
+    strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
+
+    sprintf(szBuf, "Enable Interrupts= %d", g_byEnableInterrupts);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szBuf);
     strcat_s((char*)(g_bFdcResponse),  sizeof(g_bFdcResponse)-1, szLineEnd);
 

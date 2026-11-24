@@ -107,8 +107,7 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
         }
        	g_byResetActive = false;
 
-        if (g_byRaiseInterrupt)
-        {
+        if (g_byRaiseInterrupt) {
             g_byRaiseInterrupt = false;
         	set_gpio(INT_PIN); // activate intr
         }
@@ -133,13 +132,13 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 		if ( ! (bus & 0x10) ) { // MREQ pin is active
 
 			byte highOrder = g_byEnableUpperMem && (addr >= 0x8000);
-			byte extraMem = (addr >= 0x3000) && (addr < 0x3800);
+			byte extraMem = g_byEnablePicoRAM && (addr >= 0x3000) && (addr < 0x3800);
 
 			// first check the address is serviceable
 			if (extraMem || highOrder ) {
 
 				// address lookup in range so add wait state
-				//f (g_byEnableWaitStates) set_gpio(WAIT_PIN);
+				if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
 				// flip to enable low order address as input
 				set_gpio(ADDRH_OE_PIN);
@@ -177,14 +176,14 @@ void __not_in_flash_func(ServiceZ80BusRequest)(void)
 			if ( (addr >= 0xC0) && (addr < 0xD0) ) {
 
 				// IO address in range so servicing Request
-				//if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
+				if (g_byEnableWaitStates) set_gpio(WAIT_PIN);
 
 				if (!(bus & 0x01)) { // low on iORQ IN
 					FinishReadOperation(control_port_in(addr));
 
 				} else if (!(bus & 0x08)) { // low on iORQ OUT
 
-					set_gpio(WAIT_PIN);
+					// set_gpio(WAIT_PIN);
 					control_port_out(addr, FinishWriteOperation());
 				}
 			}

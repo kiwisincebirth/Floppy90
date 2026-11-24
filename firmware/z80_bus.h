@@ -68,8 +68,6 @@ inline static void FinishReadOperation(byte data)
     put_byte_on_bus(data); // put byte on data bus
 
     NopDelay(); // propagation delay ?
-
-    // clr_gpio(WAIT_PIN); // remove any waits
 }
 
 #endif //FLOPPY90_Z80_BUS_H

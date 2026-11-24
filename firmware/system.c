@@ -20,32 +20,30 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Configuration Items
+volatile byte g_byEnablePicoRAM;
 volatile byte g_byEnableUpperMem;
 volatile byte g_byEnableFDCBoot;
 volatile byte g_byEnableFreHDBoot;
+volatile byte g_byEnableInterrupts;
 volatile byte g_byEnableWaitStates;
 
+// Basic TIME
+static uint64_t g_nPrevTime;
+
 // interrupt generation
-volatile byte g_byRaiseInterrupt;
-volatile byte g_byRtcIntrActive;
+static uint32_t g_nRtcIntrCount; // main time counter
+volatile byte g_byRaiseInterrupt; // doest interrupt Pin need to Go Active
+volatile byte g_byRtcIntrActive; // does interrupt need to be reset.
 
 // in reset mode
 volatile byte g_byResetActive;
-
-volatile uint32_t g_dwLedCount;
-
-//-----------------------------------------------------------------------------
-// counter for real time clock (RTC)
-
 static uint32_t g_dwResetTime;
-
 static byte  g_byMonitorReset;
 static uint32_t g_dwResetCount;
 
-static uint64_t g_nTimeNow;
-static uint64_t g_nPrevTime;
+// LED Control
+volatile uint32_t g_dwLedCount;
 
-static uint32_t g_nRtcIntrCount;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void __not_in_flash_func(reset_system)(void)
@@ -59,17 +57,17 @@ void __not_in_flash_func(reset_system)(void)
 void InitGlobalVars(void)
 {
 	// primary configuration items
+	g_byEnablePicoRAM    = true;
 	g_byEnableUpperMem   = false;
 	g_byEnableFDCBoot    = true;
 	g_byEnableFreHDBoot  = false;
-	g_byEnableWaitStates = true;
+	g_byEnableInterrupts = true;
+	g_byEnableWaitStates = false;
+
+	g_nPrevTime          = time_us_64();;
+	g_nRtcIntrCount      = 0;
 
 	g_dwResetTime        = 1000;	// 1ms
-
-	g_nTimeNow           = time_us_64();
-	g_nPrevTime          = g_nTimeNow;
-
-	g_nRtcIntrCount      = 0;
 	g_byMonitorReset     = FALSE;
 	g_dwResetCount       = 0;
 
@@ -316,19 +314,20 @@ void strcpy_s(char* pszDst, int nDstSize, char* pszSrc)
 ///////////////////////////////////////////////////////////////////////////////
 void UpdateCounters(void)
 {
-	uint64_t nDiff;
+	uint64_t timeNow = time_us_64();
+	uint64_t nDiff = timeNow - g_nPrevTime;
+	g_nPrevTime = timeNow;
 
-	g_nTimeNow  = time_us_64();
-	nDiff       = g_nTimeNow - g_nPrevTime;
-	g_nPrevTime = g_nTimeNow;
+	// INTERRUPTS
+	if (g_byEnableInterrupts) {
 
-	g_nRtcIntrCount += nDiff;
-
-	if (g_nRtcIntrCount > 25000) // 25mS => 40Hz RTC interrupt
-	{
-		g_nRtcIntrCount  -= 25000;
-		g_byRtcIntrActive = true;
-		g_byRaiseInterrupt = true;
+		g_nRtcIntrCount += nDiff;
+		// 25mS => 40Hz RTC interrupt
+		if (g_nRtcIntrCount > 25000) {
+			g_nRtcIntrCount  -= 25000;
+			g_byRtcIntrActive = true;
+			g_byRaiseInterrupt = true;
+		}
 	}
 
 	if (get_cd())		// 0 => card removed; 1 => card inserted;
@@ -378,7 +377,6 @@ void UpdateCounters(void)
 void SysProcessConfigEntry(char szLabel[], char* psz) {
 	/*
 	TODO - Need to add the following
-	EnablePicoRAM=1
 	FDCBOOT=/SYS/BOOT.SYS
 	EnableInterrupts=1
 	*/
@@ -387,8 +385,12 @@ void SysProcessConfigEntry(char szLabel[], char* psz) {
 		g_byEnableFDCBoot = atoi(psz);
 	} else if (stricmp(szLabel, "EnableFreHDBoot") == 0) {
 		g_byEnableFreHDBoot = atoi(psz);
+	} else if (stricmp(szLabel, "EnablePicoRAM") == 0) {
+		g_byEnablePicoRAM = atoi(psz);
 	} else if (stricmp(szLabel, "EnableHighRAM") == 0) {
 		g_byEnableUpperMem = atoi(psz);
+	} else if (stricmp(szLabel, "EnableInterrupts") == 0) {
+		g_byEnableInterrupts = atoi(psz);
 	} else if (stricmp(szLabel, "EnableWaitStates") == 0) {
 		g_byEnableWaitStates = atoi(psz);
 	} else if (strcmp(szLabel, "SDKHZ") == 0) {
@@ -403,8 +405,8 @@ void SysInit(void)
 	char  szLabel[32];
 	char* psz;
 
-	// read the default ini file to load on init
-	TFILE* f = FileOpenByName("/SYS/hardware.cfg", 0,FA_READ);
+	// read the hardware configuration file to load on init Globals
+	TFILE* f = FileOpenByName("/SYS/hardware.cfg", FA_READ);
 
 	if (f == NULL) return;
 
@@ -425,6 +427,7 @@ void SysInit(void)
 
 	FileClose(f);
 
-	SdApplyConfiguredClock();	// raise the SD card clock to SDKHZ (if set)
-
+	// raise the SD card clock to SDKHZ (if set) in Config
+	// This must happen after file is closed as affect SD card
+	SdApplyConfiguredClock();
 }
