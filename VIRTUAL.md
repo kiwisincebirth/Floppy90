@@ -122,6 +122,39 @@ Exceptions where a Virtual Page (JUMP syntax) should be used instead:
 | CALL         | JUMP           | Normal Call, future ret will unwind VM | **ROUTINE** |
 | CALL         | RET            | Normal Call/Ret pttern                 | **ROUTINE** |
 
+### Programming for re-entrant JUMP
+
+The primary mechanisms are designed around well structed CALL and RET
+code block, where a code bank hosts a callable function, with a RET at the end.
+
+Unfortunately alot of code doesnt follow this and uses JP instead,
+and manipulates the stack in ways that are not compatible with the
+banked memory system.
+
+If the banked code doesnt follow the CALL/RET pattern, then reentant code will
+fail to work, as execution of the RET in the trampoline restores the Code bank
+to its state prior to entering the code
+
+To get around this we need the Code to follow CALL/RET even though
+this is not the case. To do this need to perform the following:
+
+* The routine is defined as a callable Routine, even though it doesnt RET.
+* The first line in Function contains the instructions INC SP; INC SP
+* * This removes the return address (back to the trampoline $3000-$3200)
+* At the end of the code where there would normally be a JP (exit)
+* * Replace JP with a PUSH of the target (exit) address to the stack.
+* * Then a JP to the trampoline at $3000-$3200 offset+3. i.e. 
+* * JP $3000 + (PAGE_NUMBER * 4) + 3
+
+So what happens:
+* Entry to the trampoline $3000 (CALL $3400) the firmware will push the prior Page
+* Entry to the routine $3400 removes the return address back to the trampoline
+* * Thus it as though the code was JUMPed to, not called from trampoline
+* Then at exit of the routine, we push the target address to the stack
+* * This is the address of the next actual instruction to execute.
+* Then the JP to the trampoline will RET to the target address, just pushed
+* * Executing the RET will allow the firmware to restore the prior Page
+
 ## Potential Pitfalls to Watch
 
 ### Performance
