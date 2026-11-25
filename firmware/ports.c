@@ -318,8 +318,8 @@ byte __not_in_flash_func(CMD_CLOSE)(byte step) {
 // ====================================================================
 
 // Directory Stateful Objects
-static DIR   state_dir;
-static byte  state_dir_open = 0;
+// static DIR   state_dir;
+// static byte  state_dir_open = 0;
 
 /*
  * Open a directory
@@ -329,24 +329,24 @@ static byte  state_dir_open = 0;
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
-byte __not_in_flash_func(CMD_OPENDIR)(byte step) {
-
-	// after getting N Bytes - Signal Busy and defer processing.
-	if (step == 2) return TRS_HARD_BUSY;
-
-	if (step == 10) {
-		printf("\r\nopenDir() ");
-		fhd_error2 = DirOpen(&state_dir, (void *)&fhd_data2[0]);
-		if (fhd_error2 != FR_OK) {
-			state_dir_open = 0;
-			return STATUS_ERROR;
-		} else {
-			state_dir_open = 1;
-		}
-	}
-
-	return STATUS_OK;
-}
+// byte __not_in_flash_func(CMD_OPENDIR)(byte step) {
+//
+// 	// after getting N Bytes - Signal Busy and defer processing.
+// 	if (step == 2) return TRS_HARD_BUSY;
+//
+// 	if (step == 10) {
+// 		printf("\r\nopenDir() ");
+// 		fhd_error2 = DirOpen(&state_dir, (void *)&fhd_data2[0]);
+// 		if (fhd_error2 != FR_OK) {
+// 			state_dir_open = 0;
+// 			return STATUS_ERROR;
+// 		} else {
+// 			state_dir_open = 1;
+// 		}
+// 	}
+//
+// 	return STATUS_OK;
+// }
 
 /*
  * Read a directory
@@ -358,45 +358,45 @@ byte __not_in_flash_func(CMD_OPENDIR)(byte step) {
  *                   DATA2 contains directory info data.
  *           If clear: no more entries in this directory.
  */
-byte __not_in_flash_func(CMD_READDIR)(byte step)
-{
-	static FILINFO fno;
-	static FILINFO_API api_fno;
-
-	// after getting Command - Signal Busy and defer processing.
-	if (step == 1) {
-
-		if (state_dir_open == 0) {
-			fhd_error2 = TRS_ILL_FILENUMBER;
-			return STATUS_ERROR;
-		} else {
-			// Signal Busy and defer processing.
-			return TRS_HARD_BUSY;
-		}
-	}
-
-	if (step == 10) {
-		if (state_dir_open == 0) {
-			// user has not done opendir() before.
-			fhd_error2 = TRS_ILL_FILENUMBER;
-			return STATUS_ERROR;
-		}
-		fhd_error2 = DirRead(&state_dir, &fno);
-		if (fhd_error2 != FR_OK) return STATUS_ERROR;
-		copyFILEINFO(&api_fno,&fno);
-
-		if (api_fno.fname[0] == 0) {
-			// reach end of dir : do not set DRQ
-			return STATUS_OK;
-		}
-
-		fhd_size2 = (unsigned char) sizeof (FILINFO_API);
-		memcpy((void *)fhd_data2, &api_fno, fhd_size2);
-		return STATUS_OKDATA;
-	}
-
-	return STATUS_OK;
-}
+// byte __not_in_flash_func(CMD_READDIR)(byte step)
+// {
+// 	static FILINFO fno;
+// 	static FILINFO_API api_fno;
+//
+// 	// after getting Command - Signal Busy and defer processing.
+// 	if (step == 1) {
+//
+// 		if (state_dir_open == 0) {
+// 			fhd_error2 = TRS_ILL_FILENUMBER;
+// 			return STATUS_ERROR;
+// 		} else {
+// 			// Signal Busy and defer processing.
+// 			return TRS_HARD_BUSY;
+// 		}
+// 	}
+//
+// 	if (step == 10) {
+// 		if (state_dir_open == 0) {
+// 			// user has not done opendir() before.
+// 			fhd_error2 = TRS_ILL_FILENUMBER;
+// 			return STATUS_ERROR;
+// 		}
+// 		fhd_error2 = DirRead(&state_dir, &fno);
+// 		if (fhd_error2 != FR_OK) return STATUS_ERROR;
+// 		copyFILEINFO(&api_fno,&fno);
+//
+// 		if (api_fno.fname[0] == 0) {
+// 			// reach end of dir : do not set DRQ
+// 			return STATUS_OK;
+// 		}
+//
+// 		fhd_size2 = (unsigned char) sizeof (FILINFO_API);
+// 		memcpy((void *)fhd_data2, &api_fno, fhd_size2);
+// 		return STATUS_OKDATA;
+// 	}
+//
+// 	return STATUS_OK;
+// }
 
 // ====================================================================
 
@@ -1655,8 +1655,8 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_EXTRA_READFILE]	= CMD_READ,
 	[TRS_EXTRA_WRITEFILE]	= CMD_WRITE,
 	[TRS_EXTRA_CLOSEFILE]	= CMD_CLOSE,
-	[TRS_EXTRA_OPENDIR]		= CMD_OPENDIR,
-	[TRS_EXTRA_READDIR]		= CMD_READDIR,
+//	[TRS_EXTRA_OPENDIR]		= CMD_OPENDIR,
+//  [TRS_EXTRA_READDIR]		= CMD_READDIR,
 
 	// General Purpose  ( $10 - $13 )
 	[TRS_NEWER_DIR]			= CMD_DIR,

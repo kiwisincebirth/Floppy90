@@ -54,8 +54,8 @@
 #define TRS_EXTRA_WRITEFILE		0x05
 #define TRS_EXTRA_CLOSEFILE		0x06
 #define TRS_EXTRA_BOOTLOADER	0x07
-#define TRS_EXTRA_OPENDIR		0x08
-#define TRS_EXTRA_READDIR		0x09
+// #define TRS_EXTRA_OPENDIR		0x08
+// #define TRS_EXTRA_READDIR		0x09
 //
 // NEWER Commands (Post FreHD)
 //
