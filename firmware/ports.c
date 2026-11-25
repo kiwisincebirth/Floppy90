@@ -151,38 +151,49 @@ byte __not_in_flash_func(CMD_OPEN)(byte step) {
 		FileClose((void *)state_openFile);
 
 		BYTE byMode = fhd_data2[0]; // first byte is the OPEN mode
-		char* pszFromZ80 = (char*)&fhd_data2[1]; // next bytes are the file name
+		char *pszFromZ80 = (char *)&fhd_data2[1];; // next bytes are the file name
 
 		// Sanitised
-		char cleanPath[33];
-		byte driveNum;
+		Trs80PathResult res;
 
 		// 1. Sanitize the string (handles /ext and :D)
-		sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
+		// sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
+		trs80_resolve_path(pszFromZ80, 32, &res);
 
 		// 2. Open it (relative to CWD)
-		state_openFile = FileOpenByName(cleanPath, driveNum, byMode);
+		state_openFile = FileOpenByName(res.primary, byMode);
 
 		if ( state_openFile ) {
-
 			fhd_error2 = state_openFile->lastResult;
-			if ( state_openFile->byIsOpen ) {
 
-				FSIZE_t size = FileGetSize(state_openFile);
-				printf("\r\nopenFile(%s,%llu) ",cleanPath,size);
+			bool allowSecondary = res.hasSecondary &&
+				((byMode & (FA_CREATE_ALWAYS | FA_OPEN_ALWAYS | FA_CREATE_NEW)) == 0);
 
-				fhd_size2 = sizeof (DWORD); // file size as 4 bytes
-				memcpy((void *)fhd_data2, &size, fhd_size2);
+			if ( ! state_openFile->byIsOpen && allowSecondary ) {
+				state_openFile = FileOpenByName(res.secondary, byMode);
+			}
 
-				return STATUS_OKDATA;
+			if ( state_openFile ) {
+				fhd_error2 = state_openFile->lastResult;
+
+				if ( state_openFile->byIsOpen ) {
+
+					FSIZE_t size = FileGetSize(state_openFile);
+					printf("\r\nopenFile(%s,%llu) ",res.primary,size);
+
+					fhd_size2 = sizeof (DWORD); // file size as 4 bytes
+					memcpy((void *)fhd_data2, &size, fhd_size2);
+
+					return STATUS_OKDATA;
+				} else {
+					return STATUS_ERROR; // not opened
+				}
 			} else {
 				return STATUS_ERROR; // not opened
 			}
-		} else {
-			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
-			printf("\r\nOpenFile(TooManyFiles)");
-			return STATUS_ERROR;
 		}
+		fhd_error2 = TRS_TOO_MANY_FILES; // Or equivalent FatFs error
+		return STATUS_ERROR;
 	}
 	return STATUS_OK;
 }
@@ -505,6 +516,144 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
 // ====================================================================
 // ====================================================================
 
+static size_t format_assignments_text(char *buf, size_t bufSize)
+{
+	size_t pos = 0;
+	if (bufSize == 0) {
+		return 0;
+	}
+	buf[0] = '\0';
+
+	for (uint8_t d = 1; d <= 9; d++) {
+		const char *path = trs80_get_mapped_dir(d);
+		if (path != NULL && path[0] != '\0') {
+			int written = snprintf(
+				buf + pos,
+				bufSize - pos,
+				"%u:%s\n",
+				(unsigned int)d,
+				path);
+			if (written < 0 || (size_t)written >= bufSize - pos) {
+				pos = (written < 0) ? pos : bufSize - 1;
+				break;
+			}
+			pos += (size_t)written;
+		}
+	}
+
+	if (pos + 1 < bufSize) {
+		buf[pos++] = 0x03;
+		buf[pos] = '\0';
+	}
+	return pos;
+}
+
+static void normalize_assign_path(const char *raw, char *out, size_t outSize)
+{
+    size_t outIdx = 0;
+    if (outSize == 0) {
+        return;
+    }
+    out[0] = '\0';
+
+    while (*raw == ' ' || *raw == '\t') {
+        raw++;
+    }
+
+    if (*raw == '\0') {
+        return;
+    }
+
+    /* Ensure leading '/' so joined paths become "/DOCS/FILE.TXT" */
+    if (*raw != '/') {
+        out[outIdx++] = '/';
+        out[outIdx] = '\0';
+    }
+
+    while (*raw != '\0' && outIdx + 1 < outSize) {
+        unsigned char c = (unsigned char)*raw++;
+        if (c == '\r' || c == '\n' || c == 0x03) {
+            break;
+        }
+        if (c == '\\') {
+            c = '/';
+        }
+        out[outIdx++] = (char)toupper(c);
+    }
+
+    /* Trim trailing whitespace or extra slashes (keep root "/" if alone) */
+    while (outIdx > 1 && (out[outIdx - 1] == ' ' || out[outIdx - 1] == '\t' || out[outIdx - 1] == '/')) {
+        outIdx--;
+    }
+    out[outIdx] = '\0';
+}
+
+/*
+ * ASSIGN a Drive Number to a Directory
+ * ASSIGN {N:{PathSpecc}} - Three Forms
+ *   -null- - display the current mappings
+ *   N: - remove assignment for Drive N
+ *   N:PathSpec - assign Drive to Path Spec
+ *
+ * 1. TRS issues COMMAND2
+ * 1. TRS issues SIZE2, sends DATA2
+ * 3. TRS waits
+ * 4. TRS reads status.
+ * 			If TRS_HARD_ERR set, check ERROR2 and exit
+ *			If DATA is available then
+ * 5. TRS Reads SIZE2 bytes. -> displays to user
+ */
+byte __not_in_flash_func(CMD_ASSIGN)(byte step) {
+
+    if (step == 2) return TRS_HARD_BUSY;
+
+    if (step == 10) {
+        char *arg = (char *)fhd_data2;
+        arg[TRS80_PATH_MAX - 1] = '\0';
+
+        /* Strip terminators and leading spaces */
+        for (size_t i = 0; arg[i] != '\0'; i++) {
+            if (arg[i] == '\r' || arg[i] == '\n' || arg[i] == 0x03) {
+                arg[i] = '\0';
+                break;
+            }
+        }
+        while (*arg == ' ' || *arg == '\t') {
+            arg++;
+        }
+
+        /* Form 1: ASSIGN (no arguments -> list current mappings) */
+        if (*arg != '\0') {
+            /* Expect <1..9>:<optional path> */
+            if (arg[0] < '1' || arg[0] > '9' || arg[1] != ':') {
+                fhd_error2 = TRS_DEVICE_NOT_AVAIL; /* or your DOS syntax error */
+                return STATUS_ERROR;
+            }
+
+            uint8_t driveId = (uint8_t)(arg[0] - '0');
+            const char *pathPart = arg + 2;
+
+            char normPath[TRS80_PATH_MAX];
+            normalize_assign_path(pathPart, normPath, sizeof(normPath));
+
+            /* Form 2 & 3: non-empty sets mapping; empty (e.g. "1:") clears it */
+            if (normPath[0] == '\0') {
+                trs80_set_mapped_dir(driveId, NULL);
+            } else {
+                trs80_set_mapped_dir(driveId, normPath);
+            }
+
+        	// SAVE ASSIGN configuration
+        	trs80_save_assign_cfg();
+        }
+
+        size_t outLen = format_assignments_text((char *)fhd_data2, TRS80_PATH_MAX * 4);
+        fhd_size2 = (WORD)outLen;
+        return STATUS_OKDATA;
+    }
+
+    return STATUS_OK;
+}
 
 /*
  * Change directory
@@ -912,7 +1061,7 @@ typedef struct {
 	BYTE    byMode;			/* Open Mode - Defined by FF */
 	BYTE    lrl;			/* Logical Record Length 256=0 */
 	WORD	buffaddr;		/* address of in memory buffer */
-	TCHAR	filename[32];	/* FCB containing filename */
+	TCHAR	fcb[32];		/* FCB containing filename */
 } OPEN_REQUEST;
 #pragma pack(pop)
 
@@ -1068,74 +1217,80 @@ void debug_dump_buffer(const char* title, const byte* buf, size_t len) {
 byte __not_in_flash_func(CMD_FILE_OPEN)(byte step) {
 
 	if (step == 1) { // SET the number of bytes upfront.
-		fhd_size2 = 32 + 4; // the fcb and 4 bytes "OPEN_REQUEST"
-	}
+       fhd_size2 = 32 + 4; // the fcb and 4 bytes "OPEN_REQUEST"
+    }
 
-	// after getting N Bytes - Signal Busy and defer processing.
-	if (step == 2) return TRS_HARD_BUSY;
+    // after getting N Bytes - Signal Busy and defer processing.
+    if (step == 2) return TRS_HARD_BUSY;
 
-	if (step == 10) {
+    if (step == 10) {
 
-		// debug_dump_buffer("Open Request", (byte*)fhd_data2, 32);
+       // debug_dump_buffer("Open Request", (byte*)fhd_data2, 32);
 
-		// cast copy the request data into OPEN_REQUEST
-		OPEN_REQUEST* openRequest = (OPEN_REQUEST*)fhd_data2;
+       OPEN_REQUEST *openRequest = (OPEN_REQUEST *)fhd_data2;
+       BYTE byMode = openRequest->byMode;
 
-		// Sanitised
-		char cleanName[33];
-		byte driveNum;
+       Trs80PathResult res;
+       trs80_resolve_path((char *)openRequest->fcb, 32, &res);
 
-		// 1. Sanitize the string (handles /ext and :D)
-		sanitizeTrs80Path((char*)openRequest->filename, cleanName, &driveNum, 32);
+       printf("\r\nfileOpen(%s) ", res.primary);
 
-		printf("\r\nfileOpen(%s) ",cleanName);
+       TFILE *file = FileOpenByName(res.primary, byMode);
 
-		// the main open command
-		TFILE *file = FileOpenByName(cleanName, driveNum, openRequest->byMode);
+    	bool allowSecondary =
+			res.hasSecondary &&
+			((byMode & (FA_CREATE_ALWAYS | FA_OPEN_ALWAYS | FA_CREATE_NEW)) == 0);
 
-		if ( file == NULL ) {
-			fhd_error2 = FR_TOO_MANY_OPEN_FILES; // Or equivalent FatFs error
-			printf("Err=TooManyFiles ");
-			return STATUS_ERROR;
-		}
+    	if (file && !file->byIsOpen && allowSecondary) {
+          file = FileOpenByName(res.secondary, byMode);
+          if (file && file->byIsOpen) {
+             printf("[USR:%s] ", res.secondary);
+          }
+       }
 
-		fhd_error2 = file->lastResult;
+       if (file == NULL) {
+          fhd_error2 = TRS_TOO_MANY_FILES;
+          printf("Err=TooManyFiles ");
+          return STATUS_ERROR;
+       }
 
-		if (fhd_error2 == FR_OK) {
+       fhd_error2 = file->lastResult;
 
-			printf("Id=%d Size=%lu ",file->fileId,FileGetSize(file));
+       if (fhd_error2 == FR_OK && file->byIsOpen) {
 
-			// copy data from request into the file object
-			file->lrl = openRequest->lrl;
-			file->bufferAddress = openRequest->buffaddr;
-			file->driveId = driveNum; // extracted from the filename
+          printf("Id=%d Size=%lu ", file->fileId, (unsigned long)FileGetSize(file));
 
-			// sets all infor into FCB for return
-			FCB fcbData;
-			FileToFCB(file, &fcbData);
+          // copy data from request into the file object
+          file->lrl = openRequest->lrl;
+          file->bufferAddress = openRequest->buffaddr;
+          file->driveId = res.driveId; // extracted from the filename (0..9)
+       	  memcpy(file->originalFCB, openRequest->fcb, sizeof(file->originalFCB));
 
-			// copy FCB into Data and set size to 32
-			fhd_size2 = sizeof (FCB);
-			memcpy((void *)fhd_data2, &fcbData, fhd_size2);
+          // sets all info into FCB for return
+          FCB fcbData;
+          FileToFCB(file, &fcbData);
 
-			// debug_dump_buffer("Open Response", (byte*)fhd_data2, 32);
+          // copy FCB into Data and set size to 32
+          fhd_size2 = sizeof(FCB);
+          memcpy((void *)fhd_data2, &fcbData, fhd_size2);
 
-			// and set the current File Id reg
-			fhd_fileid = file->fileId; // Set File ID into Register
+          // debug_dump_buffer("Open Response", (byte*)fhd_data2, 32);
 
-			// Check if file is -> New / Empty (0 bytes)
-			if (FileGetSize(file) == 0) {
-				// Set a bit in our Status register (e.g., Bit 1)
-				return STATUS_OKDATA | TRS_HARD_ZERO;
-			} else {
-				return STATUS_OKDATA;
-			}
-		} else {
-			printf ("Err=%d ",fhd_error2);
-			return STATUS_ERROR; // not opened
-		}
-	}
-	return STATUS_OK;
+          // set the current File Id reg
+          fhd_fileid = file->fileId;
+
+          // Check if file is -> New / Empty (0 bytes)
+          if (FileGetSize(file) == 0) {
+             return STATUS_OKDATA | TRS_HARD_ZERO;
+          } else {
+             return STATUS_OKDATA;
+          }
+       } else {
+          printf("Err=%d ", fhd_error2);
+          return STATUS_ERROR; // not opened
+       }
+    }
+    return STATUS_OK;
 }
 
 /*
@@ -1170,9 +1325,9 @@ byte __not_in_flash_func(CMD_FILE_CLOSE)(byte step) {
 		if (fhd_error2 == FR_OK) {
 			fhd_fileid = 0 ;
 
-			// Copy the name bytes directly from our TFILE storage
-			memcpy((char *)fhd_data2, file->fname, 32);
-			fhd_size2 = 0x20;
+			// Copy the original into User data buffer for restore
+			memcpy((void *)fhd_data2, file->originalFCB, sizeof(file->originalFCB));
+			fhd_size2 = sizeof(file->originalFCB); // 32 bytes (0x20)
 
 			// debug_dump_buffer("File Close Data", (byte*)fhd_data2, 32);
 
@@ -1512,6 +1667,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_FILE_KILL]			= CMD_FILE_KILL,
 
 	// Directory Command ( $18 - $1F )
+	[TRS_NEWER_ASSIGN]	    = CMD_ASSIGN,
 	[TRS_NEWER_CHANGEDIR]	= CMD_CHANGEDIR,
 	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE,
 	[TRS_NEWER_DELETE]		= CMD_DELETE,

@@ -24,7 +24,8 @@ extern "C" {
 		UINT    bytesReadWritten;  // during last read/write
 		BYTE	lastResult;		// last error during normal IO.
 		BYTE    driveId;		// drive number 0-9, default is 0
-		TCHAR	fname[33];		// FAT 8.3 Path/Filename.ext
+		TCHAR	fname[128];		// Fully Parsed Path/Filename.ext
+		BYTE	originalFCB[32]; // Contains the unmodified User supplied FCB
 		FIL		f;
 	} TFILE;
 
@@ -55,7 +56,7 @@ extern "C" {
 
 	// File Methods - Obtain a File Object
 	TFILE*	 findOpenFile( BYTE fileId );
-	TFILE*   FileOpenByName(const char* pszFileName, BYTE driveNum, BYTE byMode);
+	TFILE*   FileOpenByName(const char* pszFileName, BYTE byMode);
 	BYTE     FileOpenCount(void);
 
 	// Misc Metods

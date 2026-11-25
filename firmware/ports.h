@@ -68,6 +68,7 @@
 #define TRS_FILE_KILL		    0x16
 //
 // File Management Command	($18 - $1F)
+#define TRS_NEWER_ASSIGN		0x18
 #define TRS_NEWER_CHANGEDIR		0x19
 #define TRS_NEWER_COPYFILE		0x1A
 #define TRS_NEWER_DELETE		0x1B
