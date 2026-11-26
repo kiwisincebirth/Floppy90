@@ -1,5 +1,6 @@
 #ifndef __FILE_C_
 #define __FILE_C_
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,6 +97,7 @@ extern "C" {
 	BYTE FileDelete ( const TCHAR* file );
 	BYTE FileRename ( const TCHAR* old, const TCHAR* new );
 
+	BYTE get_normalized_cwd(char *outCwd, size_t outCwdSize, FRESULT *frOut);
 	BYTE CurrentDirectory (TCHAR* buff,	UINT len);
 
 	//-----------------------------------------------------------------------------

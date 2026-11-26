@@ -401,11 +401,247 @@ byte __not_in_flash_func(CMD_CLOSE)(byte step) {
 // ====================================================================
 
 /*
- * Directory
- * DIR {wildcard}{optional :dirNumber}
- * - specify a wildcard selection (required)
- * - Specify a Drive number 0-9 (0 current dir is the default) - FUTURE
- * - Doest allow path to be specified
+ * parse_dir_target
+ *
+ * Intent:
+ *   Parses a DIR command argument string into a target FatFs directory path and
+ *   a wildcard/filter pattern, supporting TRSDOS-style postfixed drive numbers
+ *   (:0..:9) and explicit path prefixes (/, ./, ../) while rejecting invalid
+ *   combinations.
+ *
+ * Supported Usage Patterns:
+ *   - DIR                  -> dir = ".", pattern = "*"
+ *   - DIR *.BAS            -> dir = ".", pattern = "*.BAS"
+ *   - DIR :2               -> dir = <mapped drive 2>, pattern = "*"
+ *   - DIR *.BAS:2          -> dir = <mapped drive 2>, pattern = "*.BAS"
+ *   - DIR /SYS             -> dir = "/SYS", pattern = "*" (if /SYS is a dir)
+ *   - DIR /SYS/*.SYS       -> dir = "/SYS", pattern = "*.SYS"
+ *   - DIR ./SUB            -> dir = "./SUB", pattern = "*" (if ./SUB is a dir)
+ *   - DIR ../OTHER         -> dir = "<parent of CWD>/OTHER", pattern = "*"
+ *
+ * Rejected / Error Cases (*errFlag = true):
+ *   - Mixing explicit path prefixes (/, ./, ../) with drive numbers :1..:9
+ *     (for example, "DIR /TEMP:4").
+ *   - Requesting a logical drive :1..:9 that has no active ASSIGN mapping.
+ *
+ * Arguments:
+ *   rawInput       - Raw null-terminated argument string from Z80/fhd_data2
+ *                    (may include leading/trailing spaces or CR/LF/0x03).
+ *   outDir         - Output buffer receiving the resolved directory path.
+ *   outDirSize     - Byte capacity of outDir.
+ *   outPattern     - Output buffer receiving the wildcard/name filter pattern.
+ *   outPatternSize - Byte capacity of outPattern.
+ *   errFlag        - Output flag set to true if syntax, drive mapping, or
+ *                    conflicting path/drive rules fail; false on valid parse.
+ */
+static void parse_dir_target(
+    const char *rawInput,
+    char *outDir,
+    size_t outDirSize,
+    char *outPattern,
+    size_t outPatternSize,
+    bool *errFlag)
+{
+    char buf[TRS80_PATH_MAX];
+    *errFlag = false;
+
+    if (outDir && outDirSize > 0) outDir[0] = '\0';
+    if (outPattern && outPatternSize > 0) outPattern[0] = '\0';
+
+    snprintf(buf, sizeof(buf), "%s", rawInput ? rawInput : "");
+
+    /* Trim trailing whitespace or control terminators */
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == ' ' || buf[len - 1] == '\t' ||
+                       buf[len - 1] == '\r' || buf[len - 1] == '\n' ||
+                       buf[len - 1] == 0x03)) {
+        buf[--len] = '\0';
+    }
+
+    /* Trim leading spaces */
+    char *p = buf;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    len = strlen(p);
+
+    /* 1. Extract optional trailing :N (0..9) */
+    uint8_t driveId = 0;
+    bool hasDriveSuffix = false;
+    if (len >= 2 && p[len - 2] == ':' && p[len - 1] >= '0' && p[len - 1] <= '9') {
+        driveId = (uint8_t)(p[len - 1] - '0');
+        hasDriveSuffix = true;
+        p[len - 2] = '\0';
+        len -= 2;
+        while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t')) {
+            p[--len] = '\0';
+        }
+    }
+
+    bool hasExplicitPrefix =
+        (p[0] == '/') ||
+        (strcmp(p, ".") == 0) ||
+        (strncmp(p, "./", 2) == 0) ||
+        (strcmp(p, "..") == 0) ||
+        (strcmp(p, "../") == 0) ||
+        (strncmp(p, "../", 3) == 0);
+
+    /* Reject illogical combinations like DIR /TEMP:4 */
+    if (hasDriveSuffix && driveId >= 1 && hasExplicitPrefix) {
+        *errFlag = true;
+        return;
+    }
+
+    /* Empty input -> default dir, wildcard "*" */
+    if (*p == '\0') {
+        if (hasDriveSuffix && driveId >= 1) {
+            const char *mapped = trs80_get_mapped_dir(driveId);
+            if (!mapped || mapped[0] == '\0') {
+                *errFlag = true;
+                return;
+            }
+            snprintf(outDir, outDirSize, "%s", mapped);
+        } else {
+            snprintf(outDir, outDirSize, ".");
+        }
+        snprintf(outPattern, outPatternSize, "*");
+        return;
+    }
+
+    /* 2. Explicit path prefix (/ , ./ , ../) */
+    if (hasExplicitPrefix) {
+        char resolved[TRS80_PATH_MAX];
+
+        if (p[0] == '/') {
+            snprintf(resolved, sizeof(resolved), "%s", p);
+        } else if (strcmp(p, ".") == 0 || strncmp(p, "./", 2) == 0) {
+            const char *sub = (p[0] == '.') ? (p + 1) : p;
+            if (*sub == '\0') {
+                snprintf(resolved, sizeof(resolved), ".");
+            } else {
+                snprintf(resolved, sizeof(resolved), ".%s", sub);
+            }
+        } else {
+            /* .. / ../ / ../... handling via normalized CWD */
+            char normCwd[TRS80_PATH_MAX];
+            if (get_normalized_cwd(normCwd, sizeof(normCwd), NULL) != FR_OK || normCwd[0] == '\0') {
+                snprintf(normCwd, sizeof(normCwd), "/");
+            }
+
+            /* Step up one directory level */
+            char *lastSlash = strrchr(normCwd, '/');
+            if (lastSlash && lastSlash != normCwd) {
+                *lastSlash = '\0';
+            } else {
+                snprintf(normCwd, sizeof(normCwd), "/");
+            }
+
+            /* Extract optional suffix after "../" */
+            const char *suffix = "";
+            if (strncmp(p, "../", 3) == 0) {
+                suffix = p + 3;
+            }
+            while (*suffix == '/') {
+                suffix++;
+            }
+
+            if (strcmp(normCwd, "/") == 0) {
+                if (*suffix != '\0') {
+                    snprintf(resolved, sizeof(resolved), "/%s", suffix);
+                } else {
+                    snprintf(resolved, sizeof(resolved), "/");
+                }
+            } else {
+                if (*suffix != '\0') {
+                    snprintf(resolved, sizeof(resolved), "%s/%s", normCwd, suffix);
+                } else {
+                    snprintf(resolved, sizeof(resolved), "%s", normCwd);
+                }
+            }
+        }
+
+        /* Strip trailing slash except for lone "/" */
+        size_t rlen = strlen(resolved);
+        while (rlen > 1 && resolved[rlen - 1] == '/') {
+            resolved[--rlen] = '\0';
+        }
+
+        FILINFO st;
+        if (f_stat(resolved, &st) == FR_OK && (st.fattrib & AM_DIR)) {
+            snprintf(outDir, outDirSize, "%s", resolved);
+            snprintf(outPattern, outPatternSize, "*");
+            return;
+        }
+
+        /* Split parent dir and trailing filter/pattern */
+        char *slash = strrchr(resolved, '/');
+        if (slash) {
+            const char *pat = slash + 1;
+            if (slash == resolved) {
+                snprintf(outDir, outDirSize, "/");
+            } else {
+                *slash = '\0';
+                snprintf(outDir, outDirSize, "%s", resolved);
+            }
+            snprintf(outPattern, outPatternSize, "%s", (*pat != '\0') ? pat : "*");
+        } else {
+            snprintf(outDir, outDirSize, ".");
+            snprintf(outPattern, outPatternSize, "%s", resolved);
+        }
+        return;
+    }
+
+    /* 3. Non-prefixed filter/wildcard with optional :N */
+    if (hasDriveSuffix && driveId >= 1) {
+        const char *mapped = trs80_get_mapped_dir(driveId);
+        if (!mapped || mapped[0] == '\0') {
+            *errFlag = true;
+            return;
+        }
+        snprintf(outDir, outDirSize, "%s", mapped);
+    } else {
+        snprintf(outDir, outDirSize, ".");
+    }
+
+    snprintf(outPattern, outPatternSize, "%s", p);
+}
+
+/*
+ * CMD_DIR
+ *
+ * Command Syntax:
+ *   DIR
+ *   DIR <PATTERN>
+ *   DIR :<D>
+ *   DIR <PATTERN>:<D>
+ *   DIR /<PATH>[/<PATTERN>]
+ *   DIR ./<PATH>[/<PATTERN>]
+ *   DIR ../<PATH>[/<PATTERN>]
+ *
+ *   - <PATTERN> : Optional filename or wildcard filter (default "*").
+ *   - :<D>      : Optional postfixed logical drive number (0..9); drives 1..9
+ *                 use ASSIGN mappings and cannot be combined with explicit
+ *                 path prefixes (/, ./, ../).
+ *   - /..., ./..., ../... : Explicit root, current-directory, or parent-
+ *                 directory paths (resolved relative to CWD when using ..).
+ *
+ * Bridge Protocol / Steps:
+ *   - step == 2 : Reads argument string from fhd_data2, parses target directory
+ *                 and pattern via parse_dir_target(), flags parse errors,
+ *                 marks next scan as find-first, returns TRS_HARD_BUSY.
+ *   - step == 3 : Marks subsequent scans as find-next, returns TRS_HARD_BUSY.
+ *   - step == 10: Returns STATUS_ERROR (TRS_DEVICE_NOT_AVAIL) if parse failed;
+ *                 otherwise opens/advances directory scan skipping hidden/system
+ *                 and '.' entries, copies FILINFO_API to fhd_data2 (STATUS_OKDATA),
+ *                 or closes directory and returns STATUS_OK when finished.
+ *
+ * Arguments:
+ *   step - Bridge state-machine step index (2, 3, 10, etc.).
+ *
+ * Returns:
+ *   TRS_HARD_BUSY, STATUS_OKDATA, STATUS_OK, or STATUS_ERROR.
+ *
+ * USAGE:
  * 1. TRS issues SIZE2 of data2, and COMMAND2 + wait
  * 2. TRS sends DATA2
  *       byte 0 : drive # e.g. 0 thru 9 in binary (FUTURE)
@@ -419,103 +655,131 @@ byte __not_in_flash_func(CMD_CLOSE)(byte step) {
  */
 byte __not_in_flash_func(CMD_DIR)(byte step)
 {
-	static DIR dir;
-	static byte dir_open = 0;		// is the dir open
-	static byte dir_findfirst = 1;  // do we need to do . find first
-	static FILINFO fno;
-	static FILINFO_API api_fno;
-	static char file_pattern[16]; // the dir pattern buffer
+    static DIR dir;
+    static byte dir_open = 0;
+    static byte dir_findfirst = 1;
+    static byte need_parse = 1;
+    static FILINFO fno;
+    static FILINFO_API api_fno;
+    static char target_dir[TRS80_PATH_MAX] = ".";
+    static char file_pattern[32] = "*";
+    static byte parse_error = 0;
 
-	if (step == 2) {
+    if (step == 2) {
+        need_parse = 1;
+        dir_findfirst = 1;
+        parse_error = 0;
+        return TRS_HARD_BUSY;
 
-		// BYTE byDrive = fhd_data2[0]; // todo first byte -> virtual Drive Number (lookup)
+    } else if (step == 3) {
+        dir_findfirst = 0;
+        return TRS_HARD_BUSY;
+    }
 
-		// 1. Inline check is much faster than a function call
-		if (fhd_data2[0] == '\0') {
-			// 2. Write 32 bits at once: '*' (0x2A), '\0', '\0', '\0'
-			// This is a single STR instruction on the Cortex-M33/RISC-V
-			*(uint32_t*)file_pattern = 0x0000002A;
-		} else {
-			// 3. Fast inline copy. __builtin_memcpy tells the compiler
-			// to use the fastest hardware-specific move (like LDM/STM)
-			__builtin_memcpy(file_pattern, (void *)fhd_data2, 16);
-			file_pattern[15] = '\0'; // Hard cap for safety
-		}
+    if (step == 10) {
+        if (dir_findfirst && need_parse) {
+        	printf("\r\nDIR(%s) ", (char*)&fhd_data2[0] );
 
-		dir_findfirst = 1; // need to do the find first
+            bool err = false;
+            char raw_arg[TRS80_PATH_MAX];
 
-		// Signal Busy and defer processing.
-		return TRS_HARD_BUSY;
+            memcpy(raw_arg, (const void *)fhd_data2, sizeof(raw_arg) - 1);
+            raw_arg[sizeof(raw_arg) - 1] = '\0';
 
-	} else if (step == 3) {
+            parse_dir_target(
+                raw_arg,
+                target_dir,
+                sizeof(target_dir),
+                file_pattern,
+                sizeof(file_pattern),
+                &err);
 
-		dir_findfirst = 0; // need to do a find next
+            parse_error = err ? 1 : 0;
+            need_parse = 0;
+        }
 
-		// Signal Busy and defer processing.
-		return TRS_HARD_BUSY;
-	}
+        if (parse_error) {
+            if (dir_open) {
+                f_closedir(&dir);
+                dir_open = 0;
+            }
+            fhd_error2 = TRS_DEVICE_NOT_AVAIL;
+            fhd_size2 = 0;
+            return STATUS_ERROR;
+        }
 
-	if (step == 10) {
+        if (dir_findfirst) {
+            if (dir_open) {
+                f_closedir(&dir);
+                dir_open = 0;
+            }
 
-		if (dir_findfirst) {
+            fhd_error2 = DirFindFirst(&dir, &fno, target_dir, file_pattern);
+            dir_findfirst = 0;
+        } else {
+            fhd_error2 = DirFindNext(&dir, &fno);
+        }
 
-			if (dir_open) { // if dir is open
-				// todo tis should be replaced with method in File.h
-				f_closedir(&dir); // ensure dir is closed
-				dir_open = 0;
-			}
+        while (fhd_error2 == FR_OK && fno.fname[0] != 0 &&
+               ((fno.fattrib & AM_HID_SYS) || fno.fname[0] == '.')) {
+            fhd_error2 = DirFindNext(&dir, &fno);
+        }
 
-			// start the directory scan for first time
-			fhd_error2 = DirFindFirst(&dir, &fno, ".", file_pattern);
-		} else {
-			// read the next directory entry
-			fhd_error2 = DirFindNext(&dir, &fno);
-		}
+        if (fhd_error2 == FR_OK) {
+            dir_open = 1;
 
-		// ensure the entry is a valid item
-		while ( fhd_error2==FR_OK && fno.fname[0]!=0 &&
-			( fno.fattrib&AM_HID_SYS || fno.fname[0]=='.' ) )
-		{
-			// continue scanning the next file if the file found is hidden/system
-			fhd_error2 = DirFindNext(&dir, &fno);
+            if (fno.fname[0] != 0) {
+                copyFILEINFO(&api_fno, &fno);
+                fhd_size2 = (unsigned char)sizeof(FILINFO_API);
+                memcpy((void *)fhd_data2, &api_fno, fhd_size2);
 
-			// todo check for enless loop.
-		}
+                return STATUS_OKDATA;
+            } else {
+                fhd_size2 = 0;
+                if (dir_open) {
+                    f_closedir(&dir);
+                    dir_open = 0;
+                }
+                return STATUS_OK;
+            }
+        } else {
+            if (dir_open) {
+                f_closedir(&dir);
+                dir_open = 0;
+            }
+            return STATUS_ERROR;
+        }
+    }
 
-		if (fhd_error2 == FR_OK) {
-			dir_open = 1;
-
-			if ( fno.fname[0] != 0) {
-
-				// move the data into the buffer
-				copyFILEINFO(&api_fno,&fno);
-				fhd_size2 = (unsigned char) sizeof (FILINFO_API);
-				memcpy((void *)fhd_data2, &api_fno, fhd_size2);
-
-				return STATUS_OKDATA;
-
-			} else {
-				// End of directory or Error
-				fhd_size2 = 0; // TELL THE Z80 THERE IS NOTHING TO READ
-				if (dir_open) { // if dir is open
-					// todo tis should be replaced with method in File.h
-					f_closedir(&dir); // ensure dir is closed
-					dir_open = 0;
-				}
-				return STATUS_OK; // signal no data
-			}
-		} else {
-			return STATUS_ERROR;
-		}
-	}
-	return STATUS_OK;
-
+    return STATUS_OK;
 }
 
 // ====================================================================
 // ====================================================================
 // ====================================================================
 
+/*
+ * format_assignments_text
+ *
+ * Intent:
+ *   Formats active virtual drive directory mappings (:1..:9) into a display
+ *   buffer for the ASSIGN command using '\n' line separators and a trailing
+ *   0x03 (ETX) terminator so the DOS Display API prints all lines without
+ *   stopping early on 0x0D (CR).
+ *
+ * Output Format:
+ *   Each non-empty mapping in drives 1..9 is written as "<D>:<PATH>\n",
+ *   followed by a single 0x03 byte and a null terminator when space permits.
+ *   Returns 0x03 alone (plus '\0') if no drives are currently mapped.
+ *
+ * Arguments:
+ *   buf     - Destination buffer receiving the formatted text response.
+ *   bufSize - Byte capacity of buf.
+ *
+ * Returns:
+ *   Number of bytes written into buf (excluding the trailing '\0'), or 0 if
+ *   bufSize is 0.
+ */
 static size_t format_assignments_text(char *buf, size_t bufSize)
 {
 	size_t pos = 0;
@@ -548,6 +812,26 @@ static size_t format_assignments_text(char *buf, size_t bufSize)
 	return pos;
 }
 
+/*
+ * normalize_assign_path
+ *
+ * Intent:
+ *   Normalizes a raw target directory string passed to ASSIGN <D>:<PATH> into
+ *   a canonical uppercase slash-delimited path starting with '/' so path joins
+ *   and listings behave consistently.
+ *
+ * Normalization Rules:
+ *   - Skips leading spaces/tabs; if empty or terminated immediately, out
+ *     remains an empty string (used by ASSIGN <D>: to clear a mapping).
+ *   - Prepends '/' if omitted, converts '\\' to '/', and uppercases characters.
+ *   - Stops at CR ('\r'), LF ('\n'), or 0x03 (ETX).
+ *   - Strips trailing spaces, tabs, and '/' characters (preserving "/" alone).
+ *
+ * Arguments:
+ *   raw     - Raw path string following "<D>:" from the ASSIGN command input.
+ *   out     - Destination buffer receiving the normalized path.
+ *   outSize - Byte capacity of out.
+ */
 static void normalize_assign_path(const char *raw, char *out, size_t outSize)
 {
     size_t outIdx = 0;
@@ -1006,39 +1290,19 @@ byte __not_in_flash_func(CMD_PWD)(byte step)
 	if (step == 1) return TRS_HARD_BUSY;
 
 	if (step == 10) {
-		// Get the working directory into the buffer
-		fhd_error2 = CurrentDirectory((char *)fhd_data2, sizeof(fhd_data2));
+		char *buf = (char *)fhd_data2;
 
+		fhd_error2 = CurrentDirectory(buf, sizeof(fhd_data2));
 		if (fhd_error2 != FR_OK) {
 			return STATUS_ERROR;
 		}
 
-		// Strip leading drive prefix (e.g., "0:/TEMP" -> "/TEMP", "0:/" -> "/")
-		char *buf = (char *)fhd_data2;
-		const char *stripped = StripDrivePrefix(buf);
-		if (stripped != buf) {
-			size_t strippedLen = strlen(stripped);
-			memmove(buf, stripped, strippedLen + 1);
-		}
+		printf("\r\nPWD()->%s", buf);
 
-		// 1. Find the current length (excluding null)
-		uint16_t len = (uint16_t)strlen(buf);
+		size_t len = strlen(buf);
+		buf[len] = 0x0D; // Overwrite the '\0' with 0x0D (TRS-80 terminator)
+		fhd_size2 = len + 1; // length including terminator
 
-		// Bounds guard in case path fills the entire buffer
-		if (len >= sizeof(fhd_data2)) {
-			len = (uint16_t)(sizeof(fhd_data2) - 1);
-		}
-
-		// Debug: Print the actual string
-		printf("\r\nPWD(%s) %u", buf, (unsigned int)(len + 1));
-
-		// 2. Overwrite the '\0' with 0x0D (TRS-80 terminator)
-		buf[len] = 0x0D;
-
-		// 3. Set the size to include that 0x0D
-		fhd_size2 = len + 1;
-
-		// Data in the buffer for the Z80 to fetch
 		return STATUS_OKDATA;
 	}
 	return STATUS_OK;

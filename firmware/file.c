@@ -2,6 +2,7 @@
 #include "file.h"
 
 #include <ctype.h>
+#include <stdio.h>
 
 #include "string.h"
 #include <util.h>
@@ -348,10 +349,99 @@ __inline BYTE FileRename ( const TCHAR* old, const TCHAR* new ) {
 	return trans( f_rename( old, new ) );
 }
 
-__inline BYTE CurrentDirectory (TCHAR* buff,	UINT len) {
-	return trans( f_getcwd( buff, len ) );
+////////////////////////////////////////////////////////////////////////////////////
+
+/*
+ * get_normalized_cwd
+ *
+ * Intent:
+ *   Reads the current FatFs working directory via f_getcwd(), translates the
+ *   FatFs status via trans(), strips any leading "<drive>:" prefix (such as
+ *   "0:"), and normalizes the path so it always starts with '/' and has no
+ *   trailing slash except for root "/".
+ *
+ * Arguments:
+ *   outCwd     - Destination buffer receiving the normalized CWD path.
+ *   outCwdSize - Byte capacity of outCwd.
+ *   frOut      - Optional pointer receiving raw FRESULT from f_getcwd().
+ *
+ * Returns:
+ *   Translated error/status code from trans(f_getcwd(...)).
+ */
+BYTE get_normalized_cwd(char *outCwd, size_t outCwdSize, FRESULT *frOut)
+{
+	char rawCwd[128];
+	char normCwd[128];
+
+	if (outCwd == NULL || outCwdSize == 0) {
+		return TRS_DEVICE_NOT_AVAIL;
+	}
+	outCwd[0] = '\0';
+
+	FRESULT fr = f_getcwd(rawCwd, sizeof(rawCwd));
+	if (frOut != NULL) {
+		*frOut = fr;
+	}
+
+	if (fr != FR_OK) {
+		return trans(fr);
+	}
+
+	const char *p = rawCwd;
+	if (p[0] >= '0' && p[0] <= '9' && p[1] == ':') {
+		p += 2;
+	}
+
+	if (p[0] == '\0') {
+		snprintf(normCwd, sizeof(normCwd), "/");
+	} else if (p[0] != '/') {
+		snprintf(normCwd, sizeof(normCwd), "/%s", p);
+	} else {
+		snprintf(normCwd, sizeof(normCwd), "%s", p);
+	}
+
+	size_t len = strlen(normCwd);
+	while (len > 1 && normCwd[len - 1] == '/') {
+		normCwd[--len] = '\0';
+	}
+
+	snprintf(outCwd, outCwdSize, "%s", normCwd);
+	return FR_OK;
 }
 
+/*
+ * CurrentDirectory
+ *
+ * Intent:
+ *   Drop-in replacement for the inline CurrentDirectory() wrapper that
+ *   fetches and normalizes the current working directory directly into the
+ *   caller's buffer (stripping FatFs drive prefixes like "0:" and ensuring
+ *   canonical '/' formatting).
+ *
+ * Arguments:
+ *   buff - Output buffer receiving the normalized current directory string.
+ *   len  - Byte capacity of buff.
+ *
+ * Returns:
+ *   Translated status code (FR_OK / 0 on success, or error code from trans()).
+ */
+BYTE CurrentDirectory(TCHAR *buff, UINT len)
+{
+	char cwd[128];
+
+	if (buff == NULL || len == 0) {
+		return TRS_DEVICE_NOT_AVAIL;
+	}
+
+	BYTE err = get_normalized_cwd(cwd, sizeof(cwd), NULL);
+	if (err != FR_OK) {
+		buff[0] = '\0';
+		return err;
+	}
+
+	snprintf(buff, (size_t)len, "%s", cwd);
+	return FR_OK;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////
 
