@@ -725,6 +725,8 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 
 	if (step == 10) {
 		char *buf = (char *)fhd_data2;
+		buf[FHD_DATA2_SIZE - 1] = '\0';
+
 		char *srcSpec = NULL;
 		char *dstSpec = NULL;
 
@@ -967,17 +969,17 @@ byte __not_in_flash_func(CMD_RENAME)(byte step)
 	return STATUS_OK;
 }
 
-static const char *StripDrivePrefix(const char *path) {
-	if (!path || path[0] == '\0') {
-		return "/";
-	}
-	// Strip "0:" (or any single-digit drive prefix followed by ':') when followed by a path
-	if (path[0] >= '0' && path[0] <= '9' && path[1] == ':') {
-		const char *rest = path + 2;
-		return (*rest != '\0') ? rest : "/";
-	}
-	return path;
-}
+// static const char *StripDrivePrefix(const char *path) {
+// 	if (!path || path[0] == '\0') {
+// 		return "/";
+// 	}
+// 	// Strip "0:" (or any single-digit drive prefix followed by ':') when followed by a path
+// 	if (path[0] >= '0' && path[0] <= '9' && path[1] == ':') {
+// 		const char *rest = path + 2;
+// 		return (*rest != '\0') ? rest : "/";
+// 	}
+// 	return path;
+// }
 
 /*
  * PWD - display working directory
@@ -1635,7 +1637,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_NEWER_ASSIGN]	    = CMD_ASSIGN,
 	[TRS_NEWER_CHANGEDIR]	= CMD_CHANGEDIR,
 	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE, // todo add :N handling
-	[TRS_NEWER_DELETE]		= CMD_DELETE, // todo add :N handling
+	[TRS_NEWER_DELETE]		= CMD_DELETE,
 	[TRS_NEWER_MAKEDIR]		= CMD_MAKEEDIR,
 	[TRS_NEWER_RENAME]		= CMD_RENAME, // todo add :N handling
 	[TRS_NEWER_PWD]			= CMD_PWD,

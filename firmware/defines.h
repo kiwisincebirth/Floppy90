@@ -146,6 +146,7 @@ enum {
 #define TRS_OK FR_OK
 // TRS-80 Error Codes - Error ORed with 0x40
 #define TRS_DEVICE_NOT_AVAIL ( 8 | 0x40)
+#define TRS_DISK_IO_ERROR    (14 | 0x40)
 #define TRS_WRITE_PROTECTED  (15 | 0x40)
 #define TRS_ILL_FILENUMBER   (15 | 0x40)
 #define TRS_ILLEGAL_FILENAME (19 | 0x40)
@@ -170,7 +171,7 @@ enum {
 // Error Translation
 static BYTE resultTranslation[] = {
 	FR_OK,					/* (0) Succeeded */
-	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
+	TRS_DISK_IO_ERROR,		/* (1) A hard error occurred in the low level disk I/O layer */
 	FR_INT_ERR,				/* (2) Assertion failed */
 	FR_NOT_READY,			/* (3) The physical drive cannot work */
 	TRS_FILE_NOT_FOUND, 	/* (4) Could not find the file */

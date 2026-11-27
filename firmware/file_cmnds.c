@@ -449,8 +449,6 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
  *   outDirSize     - Byte capacity of outDir.
  *   outPattern     - Output buffer receiving the wildcard/name filter pattern.
  *   outPatternSize - Byte capacity of outPattern.
- *   errFlag        - Output flag set to true if syntax, drive mapping, or
- *                    conflicting path/drive rules fail; false on valid parse.
  */
 BYTE parse_dir_target(
     const char *rawInput,
@@ -463,6 +461,10 @@ BYTE parse_dir_target(
 
     if (outDir && outDirSize > 0) outDir[0] = '\0';
     if (outPattern && outPatternSize > 0) outPattern[0] = '\0';
+
+    if (!outDir || outDirSize == 0 || !outPattern || outPatternSize == 0) {
+        return TRS_ILLEGAL_FILENAME;
+    }
 
     snprintf(buf, sizeof(buf), "%s", rawInput ? rawInput : "");
 
@@ -502,8 +504,8 @@ BYTE parse_dir_target(
         (strcmp(p, "../") == 0) ||
         (strncmp(p, "../", 3) == 0);
 
-    /* Reject illogical combinations like DIR /TEMP:4 */
-    if (hasDriveSuffix && driveId >= 1 && hasExplicitPrefix) {
+    /* Reject illogical combinations like DIR /TEMP:4 or ./FOO:2 */
+    if (hasDriveSuffix && hasExplicitPrefix) {
         return TRS_ILLEGAL_FILENAME;
     }
 
@@ -529,12 +531,7 @@ BYTE parse_dir_target(
         if (p[0] == '/') {
             snprintf(resolved, sizeof(resolved), "%s", p);
         } else if (strcmp(p, ".") == 0 || strncmp(p, "./", 2) == 0) {
-            const char *sub = (p[0] == '.') ? (p + 1) : p;
-            if (*sub == '\0') {
-                snprintf(resolved, sizeof(resolved), ".");
-            } else {
-                snprintf(resolved, sizeof(resolved), ".%s", sub);
-            }
+            snprintf(resolved, sizeof(resolved), "%s", p);
         } else {
             /* .. / ../ / ../... handling via normalized CWD */
             char normCwd[TRS80_PATH_MAX];
@@ -617,6 +614,48 @@ BYTE parse_dir_target(
     }
 
     snprintf(outPattern, outPatternSize, "%s", p);
+    return TRS_OK;
+}
+
+/*
+ * resolve_copy_endpoint
+ *
+ * Intent:
+ *   Resolves a single COPY argument (source or destination) into a directory
+ *   and pattern/name using parse_dir_target(), preserving trailing slashes so
+ *   explicit directory destinations are recognized.
+ */
+BYTE resolve_copy_endpoint(
+    const char *spec,
+    char *outDir,
+    size_t outDirSize,
+    char *outName,
+    size_t outNameSize,
+    bool *outExplicitTrailingSep)
+{
+    if (outExplicitTrailingSep) *outExplicitTrailingSep = false;
+    if (!spec || spec[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    size_t len = strlen(spec);
+    while (len > 0 && (spec[len - 1] == ' ' || spec[len - 1] == '\t' ||
+                       spec[len - 1] == '\r' || spec[len - 1] == '\n')) {
+        len--;
+                       }
+    if (len > 0 && (spec[len - 1] == '/' || spec[len - 1] == '\\')) {
+        if (outExplicitTrailingSep) *outExplicitTrailingSep = true;
+    }
+
+    BYTE err = parse_dir_target(spec, outDir, outDirSize, outName, outNameSize);
+    if (err != TRS_OK) {
+        return err;
+    }
+
+    if (outDir[0] == '\0' || outName[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
     return TRS_OK;
 }
 
@@ -708,7 +747,7 @@ static uint8_t s_copyBuf[COPY_CHUNK_SIZE] __attribute__((aligned(4)));
  * Copies a single file from srcPath to dstPath.
  * Returns FR_OK on success, or a FatFs FRESULT error code.
  */
-FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
+BYTE CopySingleFile(const char *srcPath, const char *dstPath) {
     if (!srcPath || !dstPath || srcPath[0] == '\0' || dstPath[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
@@ -727,7 +766,8 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
         return TRS_DEVICE_NOT_AVAIL;
     }
 
-    FRESULT fr = f_open(fsrc, srcPath, FA_READ);
+    FRESULT fr;
+    fr = f_open(fsrc, srcPath, FA_READ);
     if (fr != FR_OK) {
         free(fsrc);
         free(fdst);
@@ -745,21 +785,19 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
 
     UINT br = 0, bw = 0;
     while (1) {
+
         fr = f_read(fsrc, s_copyBuf, COPY_CHUNK_SIZE, &br);
-        if (fr != FR_OK) {
-            break;
-        }
+
+        if (fr != FR_OK) break;
         if (br == 0) {
-            // Reached EOF cleanly
-            fr = FR_OK;
+            fr = FR_OK; // Reached EOF cleanly
             break;
         }
 
         fr = f_write(fdst, s_copyBuf, br, &bw);
-        if (fr != FR_OK || bw < br) {
-            if (fr == FR_OK) {
-                fr = trans(FR_DISK_ERR);
-            }
+
+        if (bw < br) fr = FR_DISK_ERR;
+        if (fr != FR_OK) {
             break;
         }
     }
@@ -774,7 +812,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath) {
     if (frCloseDst != FR_OK) return trans(frCloseDst);
     if (frCloseSrc != FR_OK) return trans(frCloseSrc);
 
-    return FR_OK;
+    return TRS_OK;
 }
 
 // ---------------------------------------------
@@ -990,7 +1028,7 @@ static bool ShouldSkipEntry(const FILINFO *fno, bool allowDirs) {
  * Copies one or more files matching srcSpec to dstSpec.
  * Returns FR_OK on full completion (including 0 matches), or the error code on failure.
  */
-FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount) {
+BYTE CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount) {
     if (copiedCount) *copiedCount = 0;
 
     if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
@@ -999,25 +1037,49 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
 
     char srcDir[TRS80_PATH_MAX];
     char srcPat[TRS80_PATH_MAX];
-    SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
+    bool srcTrailingSep = false;
+    BYTE srcErr = resolve_copy_endpoint(
+        srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat), &srcTrailingSep);
+    if (srcErr != TRS_OK) {
+        return srcErr;
+    }
 
-    if (srcPat[0] == '\0') {
+    /* A source ending in '/' or '\' names a directory, not a file or wildcard */
+    if (srcTrailingSep) {
         return TRS_ILLEGAL_FILENAME;
     }
 
+    char dstDir[TRS80_PATH_MAX];
+    char dstPat[TRS80_PATH_MAX];
+    bool dstTrailingSep = false;
+    BYTE dstErr = resolve_copy_endpoint(
+        dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat), &dstTrailingSep);
+    if (dstErr != TRS_OK) {
+        return dstErr;
+    }
+
     bool wildcard = HasWildcard(srcPat);
-    bool dstHasWildcard = HasWildcard(dstSpec);
+    bool dstHasWildcard = HasWildcard(dstPat);
+
+    /* Determine whether destination refers to an existing directory or trailing slash */
+    char dstProbe[TRS80_PATH_MAX];
+    if (strcmp(dstPat, "*") == 0 && !dstTrailingSep) {
+        snprintf(dstProbe, sizeof(dstProbe), "%s", dstDir);
+    } else if (!JoinPath(dstProbe, sizeof(dstProbe), dstDir, dstPat)) {
+        return TRS_ILLEGAL_FILENAME;
+    }
 
     FILINFO dstInfo;
-    FRESULT dstStatFr = trans(f_stat(dstSpec, &dstInfo));
-    bool dstIsDir = EndsWithSep(dstSpec) ||
+    FRESULT dstStatFr = f_stat(dstProbe, &dstInfo);
+    bool dstIsDir = dstTrailingSep ||
                     (dstStatFr == FR_OK && (dstInfo.fattrib & AM_DIR));
 
-    // Wildcard source requires either a destination directory or a destination wildcard
+    /* Wildcard source requires a destination directory or a destination wildcard */
     if (wildcard && !dstIsDir && !dstHasWildcard) {
         return TRS_ILLEGAL_FILENAME;
     }
 
+    /* Single (non-wildcard) source */
     if (!wildcard) {
         char fullSrc[TRS80_PATH_MAX];
         char fullDst[TRS80_PATH_MAX];
@@ -1027,26 +1089,30 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         }
 
         if (dstIsDir) {
-            if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, srcPat)) {
+            if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, srcPat)) {
                 return TRS_ILLEGAL_FILENAME;
             }
         } else if (dstHasWildcard) {
             char mappedName[TRS80_PATH_MAX];
-            if (!ApplyDestWildcard(dstSpec, srcPat, mappedName, sizeof(mappedName))) {
+            if (!ApplyDestWildcard(dstPat, srcPat, mappedName, sizeof(mappedName)) ||
+                !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
                 return TRS_ILLEGAL_FILENAME;
             }
-            snprintf(fullDst, sizeof(fullDst), "%s", mappedName);
         } else {
-            snprintf(fullDst, sizeof(fullDst), "%s", dstSpec);
+            if (!JoinPath(fullDst, sizeof(fullDst), dstDir, dstPat)) {
+                return TRS_ILLEGAL_FILENAME;
+            }
         }
 
         BYTE trsErr = CopySingleFile(fullSrc, fullDst);
-        if (trsErr == FR_OK && copiedCount) {
-            *copiedCount = 1;
+        if (trsErr == TRS_OK) {
+            if (copiedCount) *copiedCount = 1;
+            return TRS_OK;
         }
         return trsErr;
     }
 
+    /* Wildcard source directory scan */
     DIR *dir = (DIR *)malloc(sizeof(DIR));
     FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
     if (!dir || !fno) {
@@ -1062,23 +1128,20 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         return trans(fr);
     }
 
-    char dstDir[TRS80_PATH_MAX];
-    char dstPat[TRS80_PATH_MAX];
-    if (dstHasWildcard) {
-        SplitSrcSpec(dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat));
-    }
+    BYTE trsResult = TRS_OK;
 
     while (1) {
         fr = f_readdir(dir, fno);
         if (fr != FR_OK) {
+            trsResult = trans(fr);
             break;
         }
         if (fno->fname[0] == '\0') {
-            fr = FR_OK;
+            trsResult = TRS_OK;
             break;
         }
 
-        if (ShouldSkipEntry(fno,false)) {
+        if (ShouldSkipEntry(fno, false)) {
             continue;
         }
 
@@ -1087,27 +1150,28 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
             char fullDst[TRS80_PATH_MAX];
 
             if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
-                fr = TRS_ILLEGAL_FILENAME;
+                trsResult = TRS_ILLEGAL_FILENAME;
                 break;
             }
 
-            if (dstHasWildcard) {
+            if (dstHasWildcard && !dstIsDir) {
                 char mappedName[TRS80_PATH_MAX];
                 if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
                     !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
-                    fr = TRS_ILLEGAL_FILENAME;
+                    trsResult = TRS_ILLEGAL_FILENAME;
                     break;
                 }
             } else {
-                if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, fno->fname)) {
-                    fr = TRS_ILLEGAL_FILENAME;
+                const char *targetBaseDir = dstIsDir ? dstProbe : dstDir;
+                if (!JoinPath(fullDst, sizeof(fullDst), targetBaseDir, fno->fname)) {
+                    trsResult = TRS_ILLEGAL_FILENAME;
                     break;
                 }
             }
 
             BYTE copyErr = CopySingleFile(fullSrc, fullDst);
-            if (copyErr != FR_OK) {
-                fr = copyErr;
+            if (copyErr != TRS_OK) {
+                trsResult = copyErr;
                 break;
             }
 
@@ -1119,7 +1183,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     free(dir);
     free(fno);
 
-    return fr;
+    return trsResult;
 }
 
 // ========================================================

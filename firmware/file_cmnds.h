@@ -62,7 +62,7 @@ BYTE resolve_delete_spec(
  * Copies a single file from srcPath to dstPath.
  * Returns FR_OK on success, or a FatFs FRESULT error code.
  */
-FRESULT CopySingleFile(const char *srcPath, const char *dstPath);
+BYTE CopySingleFile(const char *srcPath, const char *dstPath);
 
 /**
  * Copies one or more files matching srcSpec to dstSpec.
@@ -71,7 +71,7 @@ FRESULT CopySingleFile(const char *srcPath, const char *dstPath);
  * Updates *copiedCount and returns FR_OK on full completion,
  * or the FatFs FRESULT code on failure.
  */
-FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount);
+BYTE CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount);
 
 /**
  * Deletes one or more files matching delSpec.
