@@ -25,6 +25,8 @@ typedef struct {
     bool truncated;                     /* True if any output buffer hit its capacity limit */
 } Trs80PathResult;
 
+// =============================
+
 /* Load Configuration */
 void trs80_load_assign_cfg(void);
 
@@ -37,8 +39,18 @@ const char *trs80_get_mapped_dir(uint8_t driveId);
 /* Optional setter for config loader; enforces index 0 == NULL and range 1..9 */
 void trs80_set_mapped_dir(uint8_t driveId, const char *dirPath);
 
+// =============================
+
 /* Single entry point for callers: parses token, resolves :1..:9, builds /USR/ fallback */
 void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out);
+
+void parse_dir_target(
+    const char *rawInput,
+    char *outDir,
+    size_t outDirSize,
+    char *outPattern,
+    size_t outPatternSize,
+    bool *errFlag);
 
 // =============================
 

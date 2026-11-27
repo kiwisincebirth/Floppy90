@@ -418,6 +418,214 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
     }
 }
 
+/*
+ * parse_dir_target
+ *
+ * Intent:
+ *   Parses a DIR command argument string into a target FatFs directory path and
+ *   a wildcard/filter pattern, supporting TRSDOS-style postfixed drive numbers
+ *   (:0..:9) and explicit path prefixes (/, ./, ../) while rejecting invalid
+ *   combinations.
+ *
+ * Supported Usage Patterns:
+ *   - DIR                  -> dir = ".", pattern = "*"
+ *   - DIR *.BAS            -> dir = ".", pattern = "*.BAS"
+ *   - DIR :2               -> dir = <mapped drive 2>, pattern = "*"
+ *   - DIR *.BAS:2          -> dir = <mapped drive 2>, pattern = "*.BAS"
+ *   - DIR /SYS             -> dir = "/SYS", pattern = "*" (if /SYS is a dir)
+ *   - DIR /SYS/*.SYS       -> dir = "/SYS", pattern = "*.SYS"
+ *   - DIR ./SUB            -> dir = "./SUB", pattern = "*" (if ./SUB is a dir)
+ *   - DIR ../OTHER         -> dir = "<parent of CWD>/OTHER", pattern = "*"
+ *
+ * Rejected / Error Cases (*errFlag = true):
+ *   - Mixing explicit path prefixes (/, ./, ../) with drive numbers :1..:9
+ *     (for example, "DIR /TEMP:4").
+ *   - Requesting a logical drive :1..:9 that has no active ASSIGN mapping.
+ *
+ * Arguments:
+ *   rawInput       - Raw null-terminated argument string from Z80/fhd_data2
+ *                    (may include leading/trailing spaces or CR/LF/0x03).
+ *   outDir         - Output buffer receiving the resolved directory path.
+ *   outDirSize     - Byte capacity of outDir.
+ *   outPattern     - Output buffer receiving the wildcard/name filter pattern.
+ *   outPatternSize - Byte capacity of outPattern.
+ *   errFlag        - Output flag set to true if syntax, drive mapping, or
+ *                    conflicting path/drive rules fail; false on valid parse.
+ */
+void parse_dir_target(
+    const char *rawInput,
+    char *outDir,
+    size_t outDirSize,
+    char *outPattern,
+    size_t outPatternSize,
+    bool *errFlag)
+{
+    char buf[TRS80_PATH_MAX];
+    *errFlag = false;
+
+    if (outDir && outDirSize > 0) outDir[0] = '\0';
+    if (outPattern && outPatternSize > 0) outPattern[0] = '\0';
+
+    snprintf(buf, sizeof(buf), "%s", rawInput ? rawInput : "");
+
+    /* Trim trailing whitespace or control terminators */
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == ' ' || buf[len - 1] == '\t' ||
+                       buf[len - 1] == '\r' || buf[len - 1] == '\n' ||
+                       buf[len - 1] == 0x03)) {
+        buf[--len] = '\0';
+    }
+
+    /* Trim leading spaces */
+    char *p = buf;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    len = strlen(p);
+
+    /* 1. Extract optional trailing :N (0..9) */
+    uint8_t driveId = 0;
+    bool hasDriveSuffix = false;
+    if (len >= 2 && p[len - 2] == ':' && p[len - 1] >= '0' && p[len - 1] <= '9') {
+        driveId = (uint8_t)(p[len - 1] - '0');
+        hasDriveSuffix = true;
+        p[len - 2] = '\0';
+        len -= 2;
+        while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t')) {
+            p[--len] = '\0';
+        }
+    }
+
+    bool hasExplicitPrefix =
+        (p[0] == '/') ||
+        (strcmp(p, ".") == 0) ||
+        (strncmp(p, "./", 2) == 0) ||
+        (strcmp(p, "..") == 0) ||
+        (strcmp(p, "../") == 0) ||
+        (strncmp(p, "../", 3) == 0);
+
+    /* Reject illogical combinations like DIR /TEMP:4 */
+    if (hasDriveSuffix && driveId >= 1 && hasExplicitPrefix) {
+        *errFlag = true;
+        return;
+    }
+
+    /* Empty input -> default dir, wildcard "*" */
+    if (*p == '\0') {
+        if (hasDriveSuffix && driveId >= 1) {
+            const char *mapped = trs80_get_mapped_dir(driveId);
+            if (!mapped || mapped[0] == '\0') {
+                *errFlag = true;
+                return;
+            }
+            snprintf(outDir, outDirSize, "%s", mapped);
+        } else {
+            snprintf(outDir, outDirSize, ".");
+        }
+        snprintf(outPattern, outPatternSize, "*");
+        return;
+    }
+
+    /* 2. Explicit path prefix (/ , ./ , ../) */
+    if (hasExplicitPrefix) {
+        char resolved[TRS80_PATH_MAX];
+
+        if (p[0] == '/') {
+            snprintf(resolved, sizeof(resolved), "%s", p);
+        } else if (strcmp(p, ".") == 0 || strncmp(p, "./", 2) == 0) {
+            const char *sub = (p[0] == '.') ? (p + 1) : p;
+            if (*sub == '\0') {
+                snprintf(resolved, sizeof(resolved), ".");
+            } else {
+                snprintf(resolved, sizeof(resolved), ".%s", sub);
+            }
+        } else {
+            /* .. / ../ / ../... handling via normalized CWD */
+            char normCwd[TRS80_PATH_MAX];
+            if (get_normalized_cwd(normCwd, sizeof(normCwd), NULL) != FR_OK || normCwd[0] == '\0') {
+                snprintf(normCwd, sizeof(normCwd), "/");
+            }
+
+            /* Step up one directory level */
+            char *lastSlash = strrchr(normCwd, '/');
+            if (lastSlash && lastSlash != normCwd) {
+                *lastSlash = '\0';
+            } else {
+                snprintf(normCwd, sizeof(normCwd), "/");
+            }
+
+            /* Extract optional suffix after "../" */
+            const char *suffix = "";
+            if (strncmp(p, "../", 3) == 0) {
+                suffix = p + 3;
+            }
+            while (*suffix == '/') {
+                suffix++;
+            }
+
+            if (strcmp(normCwd, "/") == 0) {
+                if (*suffix != '\0') {
+                    snprintf(resolved, sizeof(resolved), "/%s", suffix);
+                } else {
+                    snprintf(resolved, sizeof(resolved), "/");
+                }
+            } else {
+                if (*suffix != '\0') {
+                    snprintf(resolved, sizeof(resolved), "%s/%s", normCwd, suffix);
+                } else {
+                    snprintf(resolved, sizeof(resolved), "%s", normCwd);
+                }
+            }
+        }
+
+        /* Strip trailing slash except for lone "/" */
+        size_t rlen = strlen(resolved);
+        while (rlen > 1 && resolved[rlen - 1] == '/') {
+            resolved[--rlen] = '\0';
+        }
+
+        FILINFO st;
+        if (f_stat(resolved, &st) == FR_OK && (st.fattrib & AM_DIR)) {
+            snprintf(outDir, outDirSize, "%s", resolved);
+            snprintf(outPattern, outPatternSize, "*");
+            return;
+        }
+
+        /* Split parent dir and trailing filter/pattern */
+        char *slash = strrchr(resolved, '/');
+        if (slash) {
+            const char *pat = slash + 1;
+            if (slash == resolved) {
+                snprintf(outDir, outDirSize, "/");
+            } else {
+                *slash = '\0';
+                snprintf(outDir, outDirSize, "%s", resolved);
+            }
+            snprintf(outPattern, outPatternSize, "%s", (*pat != '\0') ? pat : "*");
+        } else {
+            snprintf(outDir, outDirSize, ".");
+            snprintf(outPattern, outPatternSize, "%s", resolved);
+        }
+        return;
+    }
+
+    /* 3. Non-prefixed filter/wildcard with optional :N */
+    if (hasDriveSuffix && driveId >= 1) {
+        const char *mapped = trs80_get_mapped_dir(driveId);
+        if (!mapped || mapped[0] == '\0') {
+            *errFlag = true;
+            return;
+        }
+        snprintf(outDir, outDirSize, "%s", mapped);
+    } else {
+        snprintf(outDir, outDirSize, ".");
+    }
+
+    snprintf(outPattern, outPatternSize, "%s", p);
+}
+
+
+
 // ========================================================
 // COPY SINGLE FILE
 // ========================================================
