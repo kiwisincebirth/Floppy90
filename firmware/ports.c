@@ -374,12 +374,10 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
     static FILINFO_API api_fno;
     static char target_dir[TRS80_PATH_MAX] = ".";
     static char file_pattern[32] = "*";
-    static byte parse_error = 0;
 
     if (step == 2) {
         need_parse = 1;
         dir_findfirst = 1;
-        parse_error = 0;
         return TRS_HARD_BUSY;
 
     } else if (step == 3) {
@@ -387,35 +385,31 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
         return TRS_HARD_BUSY;
     }
 
-    if (step == 10) {
-        if (dir_findfirst && need_parse) {
-        	printf("\r\nDIR(%s) ", (char*)&fhd_data2[0] );
+	if (step == 10) {
 
-            char raw_arg[TRS80_PATH_MAX];
+		if (dir_findfirst && need_parse) {
+			printf("\r\nDIR(%s) ", (char *)&fhd_data2[0]);
 
-            memcpy(raw_arg, (const void *)fhd_data2, sizeof(raw_arg) - 1);
-            raw_arg[sizeof(raw_arg) - 1] = '\0';
+			char raw_arg[TRS80_PATH_MAX];
+			memcpy(raw_arg, (const void *)fhd_data2, sizeof(raw_arg) - 1);
+			raw_arg[sizeof(raw_arg) - 1] = '\0';
 
-            bool err = parse_dir_target(
-                raw_arg,
-                target_dir,
-                sizeof(target_dir),
-                file_pattern,
-                sizeof(file_pattern));
+			fhd_error2 = parse_dir_target(
+				raw_arg,
+				target_dir,
+				sizeof(target_dir),
+				file_pattern,
+				sizeof(file_pattern));
 
-            parse_error = err ? 1 : 0;
-            need_parse = 0;
-        }
-
-        if (parse_error) {
-            if (dir_open) {
-                f_closedir(&dir);
-                dir_open = 0;
-            }
-            fhd_error2 = TRS_DEVICE_NOT_AVAIL;
-            fhd_size2 = 0;
-            return STATUS_ERROR;
-        }
+			if (fhd_error2 != TRS_OK) {
+				if (dir_open) {
+					f_closedir(&dir);
+					dir_open = 0;
+				}
+				return STATUS_ERROR;
+			}
+			need_parse = 0;
+		}
 
         if (dir_findfirst) {
             if (dir_open) {
@@ -832,10 +826,11 @@ byte __not_in_flash_func(CMD_DELETE)(byte step) {
     	char *token = strtok(psz, " ");
     	while (token != NULL) {
     		char qualifiedPath[TRS80_PATH_MAX];
+    		BYTE specErr = resolve_delete_spec(token, qualifiedPath, sizeof(qualifiedPath));
 
-    		if (!resolve_delete_spec(token, qualifiedPath, sizeof(qualifiedPath))) {
-    			printf("\r\nRM(%s) FAILED: invalid path/drive", token);
-    			lastErr = TRS_DEVICE_NOT_AVAIL;
+    		if (specErr != TRS_OK) {
+    			printf("\r\nRM(%s) FAILED: err=%u", token, (unsigned int)specErr);
+    			lastErr = specErr;
     			hadError = true;
     		} else {
     			printf("\r\nRM(%s) ", qualifiedPath);

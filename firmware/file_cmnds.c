@@ -452,7 +452,7 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
  *   errFlag        - Output flag set to true if syntax, drive mapping, or
  *                    conflicting path/drive rules fail; false on valid parse.
  */
-bool parse_dir_target(
+BYTE parse_dir_target(
     const char *rawInput,
     char *outDir,
     size_t outDirSize,
@@ -504,7 +504,7 @@ bool parse_dir_target(
 
     /* Reject illogical combinations like DIR /TEMP:4 */
     if (hasDriveSuffix && driveId >= 1 && hasExplicitPrefix) {
-        return true;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     /* Empty input -> default dir, wildcard "*" */
@@ -512,14 +512,14 @@ bool parse_dir_target(
         if (hasDriveSuffix && driveId >= 1) {
             const char *mapped = trs80_get_mapped_dir(driveId);
             if (!mapped || mapped[0] == '\0') {
-                return true;
+                return TRS_DEVICE_NOT_AVAIL;
             }
             snprintf(outDir, outDirSize, "%s", mapped);
         } else {
             snprintf(outDir, outDirSize, ".");
         }
         snprintf(outPattern, outPatternSize, "*");
-        return false;
+        return TRS_OK;
     }
 
     /* 2. Explicit path prefix (/ , ./ , ../) */
@@ -584,7 +584,7 @@ bool parse_dir_target(
         if (f_stat(resolved, &st) == FR_OK && (st.fattrib & AM_DIR)) {
             snprintf(outDir, outDirSize, "%s", resolved);
             snprintf(outPattern, outPatternSize, "*");
-            return false;
+            return TRS_OK;
         }
 
         /* Split parent dir and trailing filter/pattern */
@@ -602,14 +602,14 @@ bool parse_dir_target(
             snprintf(outDir, outDirSize, ".");
             snprintf(outPattern, outPatternSize, "%s", resolved);
         }
-        return false;
+        return TRS_OK;
     }
 
     /* 3. Non-prefixed filter/wildcard with optional :N */
     if (hasDriveSuffix && driveId >= 1) {
         const char *mapped = trs80_get_mapped_dir(driveId);
         if (!mapped || mapped[0] == '\0') {
-            return true;
+            return TRS_DEVICE_NOT_AVAIL;
         }
         snprintf(outDir, outDirSize, "%s", mapped);
     } else {
@@ -617,7 +617,7 @@ bool parse_dir_target(
     }
 
     snprintf(outPattern, outPatternSize, "%s", p);
-    return false;
+    return TRS_OK;
 }
 
 /*
@@ -628,7 +628,7 @@ bool parse_dir_target(
  *   ASSIGN mappings, /, ./, ../ prefixes, and wildcards) into a fully
  *   qualified FatFs file/wildcard path for DeleteFileSpec().
  */
-bool resolve_delete_spec(
+BYTE resolve_delete_spec(
     const char *token,
     char *outSpec,
     size_t outSpecSize)
@@ -637,19 +637,21 @@ bool resolve_delete_spec(
     char patBuf[TRS80_PATH_MAX];
 
     if (token == NULL || token[0] == '\0' || outSpec == NULL || outSpecSize == 0) {
-        return false;
+        return TRS_ILLEGAL_FILENAME;
     }
     outSpec[0] = '\0';
 
-    bool parseErr = parse_dir_target(
+    BYTE parseErr = parse_dir_target(
         token,
         dirBuf,
         sizeof(dirBuf),
         patBuf,
         sizeof(patBuf));
 
-    if (parseErr || dirBuf[0] == '\0' || patBuf[0] == '\0') {
-        return false;
+    if (parseErr!=TRS_OK) return parseErr;
+
+    if (dirBuf[0] == '\0' || patBuf[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
     }
 
     /* If token targeted a directory directly (e.g. /DIR or ..) with default "*",
@@ -657,7 +659,7 @@ bool resolve_delete_spec(
     if (strcmp(patBuf, "*") == 0) {
         FILINFO st;
         if (f_stat(dirBuf, &st) == FR_OK && (st.fattrib & AM_DIR)) {
-            return false;
+            return TRS_ACCESS_DENIED;
         }
     }
 
@@ -683,7 +685,7 @@ bool resolve_delete_spec(
         pat++;
     }
     if (*pat == '\0') {
-        return false;
+        return TRS_ILLEGAL_FILENAME;
     }
 
     if (strcmp(baseDir, "/") == 0) {
@@ -692,7 +694,7 @@ bool resolve_delete_spec(
         snprintf(outSpec, outSpecSize, "%s/%s", baseDir, pat);
     }
 
-    return true;
+    return TRS_OK;
 }
 
 // ========================================================

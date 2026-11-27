@@ -44,14 +44,14 @@ void trs80_set_mapped_dir(uint8_t driveId, const char *dirPath);
 /* Single entry point for callers: parses token, resolves :1..:9, builds /USR/ fallback */
 void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out);
 
-bool parse_dir_target(
+BYTE parse_dir_target(
     const char *rawInput,
     char *outDir,
     size_t outDirSize,
     char *outPattern,
     size_t outPatternSize);
 
-bool resolve_delete_spec(
+BYTE resolve_delete_spec(
     const char *token,
     char *outSpec,
     size_t outSpecSize);
