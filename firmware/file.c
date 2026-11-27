@@ -152,7 +152,7 @@ TFILE* FileOpenByName(const char *pszFileName, BYTE byMode)
 }
 
 //-----------------------------------------------------------------------------
-FRESULT FileClose(TFILE* fp)
+BYTE FileClose(TFILE* fp)
 {
 	// 1. Safety Gate
 	if (fp == NULL || fp->byIsOpen == FALSE) return FR_OK;
@@ -177,7 +177,7 @@ __inline BYTE FileIsOpen(const TFILE *fp)
 }
 
 //-----------------------------------------------------------------------------
-FRESULT FileRead(TFILE* fp, BYTE* pby, uint32_t nSize)
+BYTE FileRead(TFILE* fp, BYTE* pby, uint32_t nSize)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
@@ -192,7 +192,7 @@ FRESULT FileRead(TFILE* fp, BYTE* pby, uint32_t nSize)
 	return fp->lastResult;
 }
 
-FRESULT FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize)
+BYTE FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 
@@ -211,7 +211,7 @@ FRESULT FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize)
 }
 
 //-----------------------------------------------------------------------------
-FRESULT FileSeek(TFILE* fp, uint64_t nOffset)
+BYTE FileSeek(TFILE* fp, uint64_t nOffset)
 {
 	if (!fp || !fp->byIsOpen) return TRS_ILL_FILENUMBER;
 	fp->lastResult = trans( f_lseek(&fp->f, nOffset) );

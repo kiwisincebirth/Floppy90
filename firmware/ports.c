@@ -82,7 +82,7 @@ static volatile byte __aligned(4) fhd_data2[FHD_DATA2_SIZE] = {0};
 static volatile byte  fhd_size2 = 0;
 
 // ERROR2 - Actual Result of underlying FF operation
-static volatile byte  fhd_error2 = FR_OK;
+static volatile byte  fhd_error2 = TRS_OK;
 
 //-----------------------------------------------------------------------------
 
@@ -221,7 +221,7 @@ byte __not_in_flash_func(CMD_READ)(byte step) {
 
 			fhd_error2 = FileRead((void *)state_openFile, (void *)fhd_data2, fhd_size2);
 
-			if (fhd_error2 == FR_OK) {
+			if (fhd_error2 == TRS_OK) {
 
 				uint32_t actualRead = state_openFile->bytesReadWritten;
 				fhd_size2 = (byte)actualRead; // truncated to 8bit 256->0
@@ -266,7 +266,7 @@ byte __not_in_flash_func(CMD_READ)(byte step) {
 
 			fhd_error2 = FileWrite((void *)state_openFile, (void *)fhd_data2, fhd_size2);
 
-			if (fhd_error2 == FR_OK) {
+			if (fhd_error2 == TRS_OK) {
 				if ( state_openFile->bytesReadWritten < fhd_size2) {
 					return STATUS_ERROR; // didnt complete write
 				} else {
@@ -306,7 +306,7 @@ byte __not_in_flash_func(CMD_CLOSE)(byte step) {
 
 			printf("\r\ncloseFile() ");
 			fhd_error2 = FileClose((void *)state_openFile);
-			if (fhd_error2 != FR_OK) {
+			if (fhd_error2 != TRS_OK) {
 				return STATUS_ERROR;
 			}
 		}
@@ -391,19 +391,17 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
         if (dir_findfirst && need_parse) {
         	printf("\r\nDIR(%s) ", (char*)&fhd_data2[0] );
 
-            bool err = false;
             char raw_arg[TRS80_PATH_MAX];
 
             memcpy(raw_arg, (const void *)fhd_data2, sizeof(raw_arg) - 1);
             raw_arg[sizeof(raw_arg) - 1] = '\0';
 
-            parse_dir_target(
+            bool err = parse_dir_target(
                 raw_arg,
                 target_dir,
                 sizeof(target_dir),
                 file_pattern,
-                sizeof(file_pattern),
-                &err);
+                sizeof(file_pattern));
 
             parse_error = err ? 1 : 0;
             need_parse = 0;
@@ -431,12 +429,12 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
             fhd_error2 = DirFindNext(&dir, &fno);
         }
 
-        while (fhd_error2 == FR_OK && fno.fname[0] != 0 &&
+        while (fhd_error2 == TRS_OK && fno.fname[0] != 0 &&
                ((fno.fattrib & AM_HID_SYS) || fno.fname[0] == '.')) {
             fhd_error2 = DirFindNext(&dir, &fno);
         }
 
-        if (fhd_error2 == FR_OK) {
+        if (fhd_error2 == TRS_OK) {
             dir_open = 1;
 
             if (fno.fname[0] != 0) {
@@ -670,7 +668,7 @@ byte __not_in_flash_func(CMD_CHANGEDIR)(byte step)
 
 		printf("\r\nCD(%s) ", psz );
 		fhd_error2 = DirChange((const TCHAR *)&fhd_data2[0]);
-		if (fhd_error2 != FR_OK) {
+		if (fhd_error2 != TRS_OK) {
 			return STATUS_ERROR;
 		}
 	}
@@ -746,7 +744,7 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 		uint32_t copiedCount = 0;
 		BYTE copyErr = CopyFileSpec(srcSpec, dstSpec, &copiedCount);
 
-		if (copyErr != FR_OK) {
+		if (copyErr != TRS_OK) {
 			fhd_error2 = copyErr;
 
 			if (copiedCount == 0) {
@@ -768,7 +766,7 @@ uint8_t __not_in_flash_func(CMD_COPYFILE)(uint8_t step) {
 			return STATUS_OKDATA;
 		}
 
-		fhd_error2 = FR_OK;
+		fhd_error2 = TRS_OK;
 		int okLen = snprintf(
 			buf,
 			FHD_DATA2_SIZE,
@@ -827,35 +825,34 @@ byte __not_in_flash_func(CMD_DELETE)(byte step) {
 
     if (step == 10) {
         char *psz = (char *)&fhd_data2[0];
-        char cleanPath[33];
-        byte driveNum = 0;
         uint32_t deletedCount = 0;
-        BYTE lastErr = FR_OK;
+        BYTE lastErr = TRS_OK;
         bool hadError = false;
 
-        char *token = strtok(psz, " ");
+    	char *token = strtok(psz, " ");
+    	while (token != NULL) {
+    		char qualifiedPath[TRS80_PATH_MAX];
 
-        while (token != NULL) {
-            sanitizeTrs80Path(token, cleanPath, &driveNum, 32);
+    		if (!resolve_delete_spec(token, qualifiedPath, sizeof(qualifiedPath))) {
+    			printf("\r\nRM(%s) FAILED: invalid path/drive", token);
+    			lastErr = TRS_DEVICE_NOT_AVAIL;
+    			hadError = true;
+    		} else {
+    			printf("\r\nRM(%s) ", qualifiedPath);
+    			uint32_t tokenDeleted = 0;
+    			BYTE delErr = DeleteFileSpec(qualifiedPath, &tokenDeleted);
+    			deletedCount += tokenDeleted;
+    			if (delErr != TRS_OK) {
+    				printf("FAILED: %d", delErr);
+    				lastErr = delErr;
+    				hadError = true;
+    			} else {
+    				printf("OK (%lu)", (unsigned long)tokenDeleted);
+    			}
+    		}
 
-            if (cleanPath[0] != '\0') {
-                printf("\r\nRM(%s) ", cleanPath);
-
-                uint32_t tokenDeleted = 0;
-                BYTE delErr = DeleteFileSpec(cleanPath, &tokenDeleted);
-                deletedCount += tokenDeleted;
-
-                if (delErr != FR_OK) {
-                    printf("FAILED: %d", delErr);
-                    lastErr = delErr;
-                    hadError = true;
-                } else {
-                    printf("OK (%lu)", (unsigned long)tokenDeleted);
-                }
-            }
-
-            token = strtok(NULL, " ");
-        }
+    		token = strtok(NULL, " ");
+    	}
 
         if (hadError) {
             fhd_error2 = lastErr;
@@ -879,7 +876,7 @@ byte __not_in_flash_func(CMD_DELETE)(byte step) {
             return STATUS_OKDATA;
         }
 
-        fhd_error2 = FR_OK;
+        fhd_error2 = TRS_OK;
         int okLen = snprintf(
             (char *)&fhd_data2[0],
             FHD_DATA2_SIZE,
@@ -1006,7 +1003,7 @@ byte __not_in_flash_func(CMD_PWD)(byte step)
 		char *buf = (char *)fhd_data2;
 
 		fhd_error2 = CurrentDirectory(buf, sizeof(fhd_data2));
-		if (fhd_error2 != FR_OK) {
+		if (fhd_error2 != TRS_OK) {
 			return STATUS_ERROR;
 		}
 
@@ -1233,7 +1230,7 @@ byte __not_in_flash_func(CMD_FILE_OPEN)(byte step) {
 
        fhd_error2 = file->lastResult;
 
-       if (fhd_error2 == FR_OK && file->byIsOpen) {
+       if (fhd_error2 == TRS_OK && file->byIsOpen) {
 
           printf("Id=%d Size=%lu ", file->fileId, (unsigned long)FileGetSize(file));
 
@@ -1299,7 +1296,7 @@ byte __not_in_flash_func(CMD_FILE_CLOSE)(byte step) {
 
 		fhd_error2 = FileClose(file);
 
-		if (fhd_error2 == FR_OK) {
+		if (fhd_error2 == TRS_OK) {
 			fhd_fileid = 0 ;
 
 			// Copy the original into User data buffer for restore
@@ -1350,7 +1347,7 @@ byte __not_in_flash_func(CMD_FILE_KILL)(byte step) {
 		// the filename is still present.
 		fhd_error2 = FileDelete(file->fname);
 
-		if (fhd_error2 == FR_OK) {
+		if (fhd_error2 == TRS_OK) {
 			return STATUS_OK;
 		} else {
 			return STATUS_ERROR;
@@ -1392,7 +1389,7 @@ byte __not_in_flash_func(CMD_FILE_READ)(byte step) {
 		// actually read the data into the target data array starting at
 		fhd_error2 = FileRead((void *)file, (void *)&fhd_data2, file->lrl);
 
-		if (fhd_error2 == FR_OK) {
+		if (fhd_error2 == TRS_OK) {
 
 			uint32_t actualRead = file->bytesReadWritten;
 
@@ -1468,7 +1465,7 @@ byte __not_in_flash_func(CMD_FILE_WRITE)(byte step) {
 		// actually write the data from the Z80 DATA buffer TO the file
 		fhd_error2 = FileWrite((void *)file, (void *)&fhd_data2, expectedWrite);
 
-		if (fhd_error2 == FR_OK) {
+		if (fhd_error2 == TRS_OK) {
 
 			// printf("\r\nfileWrite(Bytes Written=%i)",file->bytesReadWritten);
 			uint32_t actualWrite = file->bytesReadWritten;
@@ -1555,7 +1552,7 @@ byte __not_in_flash_func(CMD_FILE_POSITION)(byte step) {
 
         fhd_error2 = FileSeek(file, position);
 
-        if (fhd_error2 == FR_OK) {
+        if (fhd_error2 == TRS_OK) {
 
 	    	printf("Pos=%llu ",position);
 

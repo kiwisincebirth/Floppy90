@@ -452,16 +452,14 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
  *   errFlag        - Output flag set to true if syntax, drive mapping, or
  *                    conflicting path/drive rules fail; false on valid parse.
  */
-void parse_dir_target(
+bool parse_dir_target(
     const char *rawInput,
     char *outDir,
     size_t outDirSize,
     char *outPattern,
-    size_t outPatternSize,
-    bool *errFlag)
+    size_t outPatternSize)
 {
     char buf[TRS80_PATH_MAX];
-    *errFlag = false;
 
     if (outDir && outDirSize > 0) outDir[0] = '\0';
     if (outPattern && outPatternSize > 0) outPattern[0] = '\0';
@@ -506,8 +504,7 @@ void parse_dir_target(
 
     /* Reject illogical combinations like DIR /TEMP:4 */
     if (hasDriveSuffix && driveId >= 1 && hasExplicitPrefix) {
-        *errFlag = true;
-        return;
+        return true;
     }
 
     /* Empty input -> default dir, wildcard "*" */
@@ -515,15 +512,14 @@ void parse_dir_target(
         if (hasDriveSuffix && driveId >= 1) {
             const char *mapped = trs80_get_mapped_dir(driveId);
             if (!mapped || mapped[0] == '\0') {
-                *errFlag = true;
-                return;
+                return true;
             }
             snprintf(outDir, outDirSize, "%s", mapped);
         } else {
             snprintf(outDir, outDirSize, ".");
         }
         snprintf(outPattern, outPatternSize, "*");
-        return;
+        return false;
     }
 
     /* 2. Explicit path prefix (/ , ./ , ../) */
@@ -588,7 +584,7 @@ void parse_dir_target(
         if (f_stat(resolved, &st) == FR_OK && (st.fattrib & AM_DIR)) {
             snprintf(outDir, outDirSize, "%s", resolved);
             snprintf(outPattern, outPatternSize, "*");
-            return;
+            return false;
         }
 
         /* Split parent dir and trailing filter/pattern */
@@ -606,15 +602,14 @@ void parse_dir_target(
             snprintf(outDir, outDirSize, ".");
             snprintf(outPattern, outPatternSize, "%s", resolved);
         }
-        return;
+        return false;
     }
 
     /* 3. Non-prefixed filter/wildcard with optional :N */
     if (hasDriveSuffix && driveId >= 1) {
         const char *mapped = trs80_get_mapped_dir(driveId);
         if (!mapped || mapped[0] == '\0') {
-            *errFlag = true;
-            return;
+            return true;
         }
         snprintf(outDir, outDirSize, "%s", mapped);
     } else {
@@ -622,9 +617,83 @@ void parse_dir_target(
     }
 
     snprintf(outPattern, outPatternSize, "%s", p);
+    return false;
 }
 
+/*
+ * resolve_delete_spec
+ *
+ * Intent:
+ *   Resolves a single DEL argument token (supporting :0..:9 drive suffixes,
+ *   ASSIGN mappings, /, ./, ../ prefixes, and wildcards) into a fully
+ *   qualified FatFs file/wildcard path for DeleteFileSpec().
+ */
+bool resolve_delete_spec(
+    const char *token,
+    char *outSpec,
+    size_t outSpecSize)
+{
+    char dirBuf[TRS80_PATH_MAX];
+    char patBuf[TRS80_PATH_MAX];
 
+    if (token == NULL || token[0] == '\0' || outSpec == NULL || outSpecSize == 0) {
+        return false;
+    }
+    outSpec[0] = '\0';
+
+    bool parseErr = parse_dir_target(
+        token,
+        dirBuf,
+        sizeof(dirBuf),
+        patBuf,
+        sizeof(patBuf));
+
+    if (parseErr || dirBuf[0] == '\0' || patBuf[0] == '\0') {
+        return false;
+    }
+
+    /* If token targeted a directory directly (e.g. /DIR or ..) with default "*",
+     * guard against accidental wildcard deletion of everything in that folder. */
+    if (strcmp(patBuf, "*") == 0) {
+        FILINFO st;
+        if (f_stat(dirBuf, &st) == FR_OK && (st.fattrib & AM_DIR)) {
+            return false;
+        }
+    }
+
+    /* Normalize "." to current working directory so joined paths are explicit */
+    char baseDir[TRS80_PATH_MAX];
+    if (strcmp(dirBuf, ".") == 0) {
+        if (get_normalized_cwd(baseDir, sizeof(baseDir), NULL) != FR_OK || baseDir[0] == '\0') {
+            snprintf(baseDir, sizeof(baseDir), "/");
+        }
+    } else {
+        snprintf(baseDir, sizeof(baseDir), "%s", dirBuf);
+    }
+
+    /* Strip trailing slashes except root "/" */
+    size_t blen = strlen(baseDir);
+    while (blen > 1 && baseDir[blen - 1] == '/') {
+        baseDir[--blen] = '\0';
+    }
+
+    /* Trim leading slashes on pattern */
+    const char *pat = patBuf;
+    while (*pat == '/') {
+        pat++;
+    }
+    if (*pat == '\0') {
+        return false;
+    }
+
+    if (strcmp(baseDir, "/") == 0) {
+        snprintf(outSpec, outSpecSize, "/%s", pat);
+    } else {
+        snprintf(outSpec, outSpecSize, "%s/%s", baseDir, pat);
+    }
+
+    return true;
+}
 
 // ========================================================
 // COPY SINGLE FILE
@@ -920,15 +989,14 @@ static bool ShouldSkipEntry(const FILINFO *fno, bool allowDirs) {
  * Returns FR_OK on full completion (including 0 matches), or the error code on failure.
  */
 FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount) {
-    if (copiedCount) {
-        *copiedCount = 0;
-    }
+    if (copiedCount) *copiedCount = 0;
+
     if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
 
-    char srcDir[128];
-    char srcPat[64];
+    char srcDir[TRS80_PATH_MAX];
+    char srcPat[TRS80_PATH_MAX];
     SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
 
     if (srcPat[0] == '\0') {
@@ -949,8 +1017,8 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
     }
 
     if (!wildcard) {
-        char fullSrc[196];
-        char fullDst[196];
+        char fullSrc[TRS80_PATH_MAX];
+        char fullDst[TRS80_PATH_MAX];
 
         if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
             return TRS_ILLEGAL_FILENAME;
@@ -961,7 +1029,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
                 return TRS_ILLEGAL_FILENAME;
             }
         } else if (dstHasWildcard) {
-            char mappedName[64];
+            char mappedName[TRS80_PATH_MAX];
             if (!ApplyDestWildcard(dstSpec, srcPat, mappedName, sizeof(mappedName))) {
                 return TRS_ILLEGAL_FILENAME;
             }
@@ -992,8 +1060,8 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         return trans(fr);
     }
 
-    char dstDir[128];
-    char dstPat[64];
+    char dstDir[TRS80_PATH_MAX];
+    char dstPat[TRS80_PATH_MAX];
     if (dstHasWildcard) {
         SplitSrcSpec(dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat));
     }
@@ -1013,8 +1081,8 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
         }
 
         if (MatchWildcard(srcPat, fno->fname)) {
-            char fullSrc[196];
-            char fullDst[196];
+            char fullSrc[TRS80_PATH_MAX];
+            char fullDst[TRS80_PATH_MAX];
 
             if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
                 fr = TRS_ILLEGAL_FILENAME;
@@ -1022,7 +1090,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
             }
 
             if (dstHasWildcard) {
-                char mappedName[64];
+                char mappedName[TRS80_PATH_MAX];
                 if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
                     !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
                     fr = TRS_ILLEGAL_FILENAME;
@@ -1041,9 +1109,7 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
                 break;
             }
 
-            if (copiedCount) {
-                (*copiedCount)++;
-            }
+            if (copiedCount) (*copiedCount)++;
         }
     }
 
@@ -1061,18 +1127,17 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
 /**
  * Deletes one or more files matching delSpec.
  * Updates *deletedCount and returns FR_OK on success (including 0 wildcard matches),
- * or a FatFs FRESULT error code on failure.
+ * or a BYTE error code on failure.
  */
-FRESULT DeleteFileSpec(const char *delSpec, uint32_t *deletedCount) {
-if (deletedCount) {
-        *deletedCount = 0;
-    }
+BYTE DeleteFileSpec(const char *delSpec, uint32_t *deletedCount) {
+    if (deletedCount) *deletedCount = 0;
+
     if (!delSpec || delSpec[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
 
-    char dirPart[128];
-    char patPart[64];
+    char dirPart[TRS80_PATH_MAX];
+    char patPart[TRS80_PATH_MAX];
     SplitSrcSpec(delSpec, dirPart, sizeof(dirPart), patPart, sizeof(patPart));
 
     if (patPart[0] == '\0') {
@@ -1080,28 +1145,23 @@ if (deletedCount) {
     }
 
     if (!HasWildcard(patPart)) {
-        char fullPath[196];
+        char fullPath[TRS80_PATH_MAX];
         if (!JoinPath(fullPath, sizeof(fullPath), dirPart, patPart)) {
             return TRS_ILLEGAL_FILENAME;
         }
 
         FILINFO info;
         FRESULT statFr = f_stat(fullPath, &info);
-        if (statFr != TRS_OK) {
+        if (statFr != FR_OK) {
             return trans(statFr);
         }
-        // if (info.fattrib & AM_DIR) {
-        //     return TRS_ACCESS_DENIED;
-        // }
         if (info.fattrib & AM_RDO) {
-            return TRS_OK;
+            return TRS_ACCESS_DENIED;
         }
 
         BYTE delErr = FileDelete(fullPath);
         if (delErr == TRS_OK) {
-            if (deletedCount) {
-                (*deletedCount)++;
-            }
+            if (deletedCount) (*deletedCount)++;
             return TRS_OK;
         }
         return delErr;
@@ -1115,8 +1175,8 @@ if (deletedCount) {
         return TRS_DEVICE_NOT_AVAIL;
     }
 
-    FRESULT fr = f_opendir(dir, dirPart);
-    if (fr != FR_OK) {
+    BYTE fr = f_opendir(dir, dirPart);
+    if (fr != TRS_OK) {
         free(dir);
         free(fno);
         return trans(fr);
@@ -1139,7 +1199,7 @@ if (deletedCount) {
         }
 
         if (MatchWildcard(patPart, fno->fname)) {
-            char fullPath[196];
+            char fullPath[TRS80_PATH_MAX];
             if (!JoinPath(fullPath, sizeof(fullPath), dirPart, fno->fname)) {
                 trsResult = TRS_ILLEGAL_FILENAME;
                 break;
@@ -1151,9 +1211,7 @@ if (deletedCount) {
                 break;
             }
 
-            if (deletedCount) {
-                (*deletedCount)++;
-            }
+            if (deletedCount) (*deletedCount)++;
         }
     }
 
@@ -1169,15 +1227,13 @@ if (deletedCount) {
 // ========================================================
 
 BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount) {
-    if (renamedCount) {
-        *renamedCount = 0;
-    }
+    if (renamedCount) *renamedCount = 0;
     if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
 
-    char srcDir[128];
-    char srcPat[64];
+    char srcDir[TRS80_PATH_MAX];
+    char srcPat[TRS80_PATH_MAX];
     SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
 
     if (srcPat[0] == '\0') {
@@ -1211,9 +1267,7 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
         }
 
         BYTE err = FileRename(fullSrc, fullDst);
-        if (err == TRS_OK && renamedCount) {
-            (*renamedCount)++;
-        }
+        if (err == TRS_OK && renamedCount) (*renamedCount)++;
         return err;
     }
 
@@ -1222,8 +1276,8 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
         return TRS_ILLEGAL_FILENAME;
     }
 
-    char dstDir[128];
-    char dstPat[64];
+    char dstDir[TRS80_PATH_MAX];
+    char dstPat[TRS80_PATH_MAX];
     if (dstWild) {
         SplitSrcSpec(dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat));
     } else {
@@ -1265,9 +1319,9 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
         }
 
         if (MatchWildcard(srcPat, fno->fname)) {
-            char fullSrc[196];
-            char fullDst[196];
-            char mappedName[64];
+            char fullSrc[TRS80_PATH_MAX];
+            char fullDst[TRS80_PATH_MAX];
+            char mappedName[TRS80_PATH_MAX];
 
             if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
                 trsResult = TRS_ILLEGAL_FILENAME;
@@ -1293,9 +1347,7 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
                 break;
             }
 
-            if (renamedCount) {
-                (*renamedCount)++;
-            }
+            if (renamedCount) (*renamedCount)++;
         }
     }
 

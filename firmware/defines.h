@@ -150,6 +150,7 @@ enum {
 #define TRS_ILL_FILENUMBER   (15 | 0x40)
 #define TRS_ILLEGAL_FILENAME (19 | 0x40)
 #define TRS_FILE_NOT_FOUND   (24 | 0x40)
+#define TRS_ACCESS_DENIED	 (25 | 0x40)
 #define TRS_EOF_ENCOUNTERED  (28 | 0x40)
 // 29 Record number out of range
 // À request to read a record within a random access file (see the @POSN vector) provided
@@ -159,7 +160,7 @@ enum {
 // NEW Errors (previously undefined work down from 63)
 #define TRS_TOO_MANY_FILES	 (56 | 0x40)
 #define TRS_DEN_FILE_OPEN	 (57 | 0x40)
-#define TRS_ACCESS_DENIED	 (58 | 0x40)
+#define TRS_DEN_NOT_EMPTY	 (58 | 0x40)
 #define TRS_FILE_EXISTS		 (59 | 0x40)
 #define TRS_PATH_NOT_FOUND   (60 | 0x40)
 #define TRS_ILLEGAL_DOS      (61 | 0x40)

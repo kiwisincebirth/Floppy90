@@ -65,11 +65,11 @@ extern "C" {
 
 	// File Methods - OPEN Files
 	BYTE     FileIsOpen(const TFILE *fp);
-	FRESULT  FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize);
-	FRESULT  FileRead (TFILE* fp, BYTE* pby, uint32_t nSize);
+	BYTE	 FileWrite(TFILE* fp, const BYTE* pby, uint32_t nSize);
+	BYTE     FileRead (TFILE* fp, BYTE* pby, uint32_t nSize);
 	int      FileReadLine(TFILE* fp, char szLine[], int nMaxLen);
-	FRESULT  FileSeek(TFILE* fp, uint64_t nOffset);
-	FRESULT  FileClose(TFILE* fp);
+	BYTE	 FileSeek(TFILE* fp, uint64_t nOffset);
+	BYTE     FileClose(TFILE* fp);
 
 	uint32_t FileGetSize(TFILE* fp);
 	uint32_t FileGetPos(TFILE* fp);
@@ -87,7 +87,7 @@ extern "C" {
 
 	//-----------------------------------------------------------------------------
 
-	BYTE DirOpen( DIR* dp, const TCHAR* path	);
+	BYTE DirOpen( DIR* dp, const TCHAR* path );
 	BYTE DirRead( DIR* dp, FILINFO* fno );
 	BYTE DirFindFirst( DIR* dp,	FILINFO* fno, const TCHAR* path,	const TCHAR* pattern );
 	BYTE DirFindNext ( DIR* dp,	FILINFO* fno );

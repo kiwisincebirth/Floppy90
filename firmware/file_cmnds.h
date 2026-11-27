@@ -44,13 +44,17 @@ void trs80_set_mapped_dir(uint8_t driveId, const char *dirPath);
 /* Single entry point for callers: parses token, resolves :1..:9, builds /USR/ fallback */
 void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out);
 
-void parse_dir_target(
+bool parse_dir_target(
     const char *rawInput,
     char *outDir,
     size_t outDirSize,
     char *outPattern,
-    size_t outPatternSize,
-    bool *errFlag);
+    size_t outPatternSize);
+
+bool resolve_delete_spec(
+    const char *token,
+    char *outSpec,
+    size_t outSpecSize);
 
 // =============================
 
@@ -72,9 +76,9 @@ FRESULT CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedC
 /**
  * Deletes one or more files matching delSpec.
  * Updates *deletedCount and returns FR_OK on success (including 0 wildcard matches),
- * or a FatFs FRESULT error code on failure.
+ * or a FatFs BYTE error code on failure.
  */
-FRESULT DeleteFileSpec(const char *delSpec, uint32_t *deletedCount);
+BYTE DeleteFileSpec(const char *delSpec, uint32_t *deletedCount);
 
 /**
  * Renames or moves a single file/directory or a wildcard set of matching files.
