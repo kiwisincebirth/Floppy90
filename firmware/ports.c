@@ -672,7 +672,7 @@ byte __not_in_flash_func(CMD_CHANGEDIR)(byte step)
 // -------------------------
 
 static bool ParseCopyArgs(char *argBuf, size_t maxLen, char **outSrc, char **outDst) {
-	if (!argBuf || maxLen == 0) return false;
+	if (!argBuf || maxLen == 0 || !outSrc || !outDst) return false;
 
 	argBuf[maxLen - 1] = '\0';
 
@@ -906,6 +906,8 @@ byte __not_in_flash_func(CMD_RENAME)(byte step)
 
 	if (step == 10) {
 		char *buf = (char *)&fhd_data2[0];
+		buf[FHD_DATA2_SIZE - 1] = '\0';
+
 		char *pSpace = strchr(buf, ' ');
 		if (!pSpace) {
 			fhd_error2 = TRS_ILLEGAL_FILENAME;
@@ -919,18 +921,10 @@ byte __not_in_flash_func(CMD_RENAME)(byte step)
 			pszDest++;
 		}
 
-		char cleanSrc[33];
-		char cleanDest[33];
-		byte driveSrc = 0;
-		byte driveDest = 0;
-
-		sanitizeTrs80Path(pszSrc, cleanSrc, &driveSrc, 32);
-		sanitizeTrs80Path(pszDest, cleanDest, &driveDest, 32);
-
-		printf("\r\nREN (%s) -> (%s)", cleanSrc, cleanDest);
+		printf("\r\nREN (%s) -> (%s)", pszSrc, pszDest);
 
 		uint32_t renamedCount = 0;
-		BYTE renErr = RenameFileSpec(cleanSrc, cleanDest, &renamedCount);
+		BYTE renErr = RenameFileSpec(pszSrc, pszDest, &renamedCount);
 
 		if (renErr != TRS_OK) {
 			fhd_error2 = renErr;
@@ -968,18 +962,6 @@ byte __not_in_flash_func(CMD_RENAME)(byte step)
 
 	return STATUS_OK;
 }
-
-// static const char *StripDrivePrefix(const char *path) {
-// 	if (!path || path[0] == '\0') {
-// 		return "/";
-// 	}
-// 	// Strip "0:" (or any single-digit drive prefix followed by ':') when followed by a path
-// 	if (path[0] >= '0' && path[0] <= '9' && path[1] == ':') {
-// 		const char *rest = path + 2;
-// 		return (*rest != '\0') ? rest : "/";
-// 	}
-// 	return path;
-// }
 
 /*
  * PWD - display working directory

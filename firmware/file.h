@@ -47,9 +47,6 @@ extern "C" {
 	// type conversion functions
 	void copyFILEINFO(FILINFO_API *dest, const FILINFO *src);
 
-	// Utility functions
-	void sanitizeTrs80Path(const char* src, char* dest, BYTE* driveId, int maxLen);
-
 	// Tests
 	void run_sanitizer_tests();
 
