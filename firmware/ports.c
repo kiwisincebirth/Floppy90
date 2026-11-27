@@ -1636,7 +1636,7 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	// Directory Command ( $18 - $1F )
 	[TRS_NEWER_ASSIGN]	    = CMD_ASSIGN,
 	[TRS_NEWER_CHANGEDIR]	= CMD_CHANGEDIR,
-	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE, // todo add :N handling
+	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE,
 	[TRS_NEWER_DELETE]		= CMD_DELETE,
 	[TRS_NEWER_MAKEDIR]		= CMD_MAKEEDIR,
 	[TRS_NEWER_RENAME]		= CMD_RENAME, // todo add :N handling
