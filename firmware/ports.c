@@ -157,7 +157,6 @@ byte __not_in_flash_func(CMD_OPEN)(byte step) {
 		Trs80PathResult res;
 
 		// 1. Sanitize the string (handles /ext and :D)
-		// sanitizeTrs80Path(pszFromZ80, cleanPath, &driveNum, 32);
 		trs80_resolve_path(pszFromZ80, 32, &res);
 
 		// 2. Open it (relative to CWD)
@@ -891,75 +890,106 @@ byte __not_in_flash_func(CMD_DELETE)(byte step) {
     return STATUS_OK;
 }
 
+static byte ExecRenameOrMoveStep10(const char *cmdTag, const RenameMovePolicy *policy)
+{
+	char *buf = (char *)&fhd_data2[0];
+	buf[FHD_DATA2_SIZE - 1] = '\0';
+
+	char *pSpace = strchr(buf, ' ');
+	if (!pSpace) {
+		fhd_error2 = TRS_ILLEGAL_FILENAME;
+		return STATUS_ERROR;
+	}
+
+	*pSpace = '\0';
+	char *pszSrc = buf;
+	char *pszDest = pSpace + 1;
+	while (*pszDest == ' ') {
+		pszDest++;
+	}
+
+	printf("\r\n%s (%s) -> (%s)", cmdTag, pszSrc, pszDest);
+
+	uint32_t renamedCount = 0;
+	BYTE renErr = RunRenameOrMoveSpec(pszSrc, pszDest, policy, &renamedCount);
+
+	if (renErr != TRS_OK) {
+		fhd_error2 = renErr;
+		if (renamedCount == 0) {
+			return STATUS_ERROR;
+		}
+
+		int errLen = snprintf(
+			buf,
+			FHD_DATA2_SIZE,
+			"%lu File(s) %sd, with Error %u\r\n",
+			(unsigned long)renamedCount,
+			cmdTag,
+			(unsigned int)renErr
+		);
+		if (errLen < 0) {
+			return STATUS_ERROR;
+		}
+		fhd_size2 = (uint16_t)errLen + 1;
+		return STATUS_OKDATA;
+	}
+
+	fhd_error2 = TRS_OK;
+	int okLen = snprintf(
+		buf,
+		FHD_DATA2_SIZE,
+		"%lu File(s) %sd.\r\n",
+		(unsigned long)renamedCount,
+		cmdTag
+	);
+	if (okLen < 0) {
+		return STATUS_ERROR;
+	}
+	fhd_size2 = (uint16_t)okLen + 1;
+	return STATUS_OKDATA;
+}
+
 /*
- * Rename a File or directory
- * REN {sourceName} {targetName} - delete file or directory
+ * Rename a File or Directory (in-place within source directory/drive)
+ * REN {sourceName} {targetName}
  *
  * 1. TRS issues COMMAND2
- * 1. TRS issues SIZE2, sends DATA2
+ * 2. TRS issues SIZE2, sends DATA2
  * 3. TRS waits
  * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
  */
 byte __not_in_flash_func(CMD_RENAME)(byte step)
 {
+	static const RenameMovePolicy kRenamePolicy = {
+		.inheritSrcDir = true,
+		.allowMoves = false,
+		.allowDirs = true
+	};
+
 	if (step == 2) return TRS_HARD_BUSY;
+	if (step == 10) return ExecRenameOrMoveStep10("Rename", &kRenamePolicy);
+	return STATUS_OK;
+}
 
-	if (step == 10) {
-		char *buf = (char *)&fhd_data2[0];
-		buf[FHD_DATA2_SIZE - 1] = '\0';
+/*
+ * Move or Rename a File or Directory across paths or mapped drives (:1-:9)
+ * MOVE {sourceSpec} {destSpec}
+ *
+ * 1. TRS issues COMMAND2
+ * 2. TRS issues SIZE2, sends DATA2
+ * 3. TRS waits
+ * 4. TRS reads status. If TRS_HARD_ERR set, check ERROR2.
+ */
+byte __not_in_flash_func(CMD_MOVE)(byte step)
+{
+	static const RenameMovePolicy kMovePolicy = {
+		.inheritSrcDir = false,
+		.allowMoves = true,
+		.allowDirs = true
+	};
 
-		char *pSpace = strchr(buf, ' ');
-		if (!pSpace) {
-			fhd_error2 = TRS_ILLEGAL_FILENAME;
-			return STATUS_ERROR;
-		}
-
-		*pSpace = '\0';
-		char *pszSrc = buf;
-		char *pszDest = pSpace + 1;
-		while (*pszDest == ' ') {
-			pszDest++;
-		}
-
-		printf("\r\nREN (%s) -> (%s)", pszSrc, pszDest);
-
-		uint32_t renamedCount = 0;
-		BYTE renErr = RenameFileSpec(pszSrc, pszDest, &renamedCount);
-
-		if (renErr != TRS_OK) {
-			fhd_error2 = renErr;
-			if (renamedCount == 0) {
-				return STATUS_ERROR;
-			}
-
-			int errLen = snprintf(
-				buf,
-				FHD_DATA2_SIZE,
-				"%lu File(s) Renamed, with Error %u\r\n",
-				(unsigned long)renamedCount,
-				(unsigned int)renErr
-			);
-			if (errLen < 0) {
-				return STATUS_ERROR;
-			}
-			fhd_size2 = (uint16_t)errLen + 1;
-			return STATUS_OKDATA;
-		}
-
-		fhd_error2 = TRS_OK;
-		int okLen = snprintf(
-			buf,
-			FHD_DATA2_SIZE,
-			"%lu File(s) Renamed.\r\n",
-			(unsigned long)renamedCount
-		);
-		if (okLen < 0) {
-			return STATUS_ERROR;
-		}
-		fhd_size2 = (uint16_t)okLen + 1;
-		return STATUS_OKDATA;
-	}
-
+	if (step == 2) return TRS_HARD_BUSY;
+	if (step == 10) return ExecRenameOrMoveStep10("Move", &kMovePolicy);
 	return STATUS_OK;
 }
 
@@ -967,16 +997,18 @@ byte __not_in_flash_func(CMD_RENAME)(byte step)
  * PWD - display working directory
  *
  * 1. TRS issues COMMAND2
- * 2. TRS waits
- * 3. TRS reads status.
+ * 2. TRS issues SIZE2, sends DATA2 (at least cmd terminator)
+ *   (for consistency with other commands) Noting. Parameters are unused
+ * 3. TRS waits
+ * 4. TRS reads status.
  * 			If TRS_HARD_ERR set, check ERROR2 and exit
  *			If DATA is available then
- * 4. TRS Reads SIZE2 bytes. -> displays to user
+ * 5. TRS Reads SIZE2 bytes. -> displays to user
  */
 
 byte __not_in_flash_func(CMD_PWD)(byte step)
 {
-	if (step == 1) return TRS_HARD_BUSY;
+	if (step == 2) return TRS_HARD_BUSY;
 
 	if (step == 10) {
 		char *buf = (char *)fhd_data2;
@@ -1017,14 +1049,6 @@ typedef struct {
 	TCHAR	fcb[32];		/* FCB containing filename */
 } OPEN_REQUEST;
 #pragma pack(pop)
-
-// void __not_in_flash_func(parseRequest)(OPEN_REQUEST* req, TFILE* f) {
-// 	// 1. Extract LRL
-// 	f->lrl = req->lrl;
-//
-// 	// 2. Use the core processor
-// 	sanitizeTrs80Path((char*)req->fcb, f->fname, &f->driveId, 32);
-// }
 
 /**
 ;  The 32 byte FCB block sent back to Z80
@@ -1621,7 +1645,8 @@ const command_func_t __not_in_flash("frehd") command_table[MAX_COMMANDS] = {
 	[TRS_NEWER_COPYFILE]	= CMD_COPYFILE,
 	[TRS_NEWER_DELETE]		= CMD_DELETE,
 	[TRS_NEWER_MAKEDIR]		= CMD_MAKEEDIR,
-	[TRS_NEWER_RENAME]		= CMD_RENAME, // todo add :N handling
+	[TRS_NEWER_RENAME]		= CMD_RENAME,
+	[TRS_NEWER_MOVE]		= CMD_MOVE,
 	[TRS_NEWER_PWD]			= CMD_PWD,
 
 	// File Handling Commands ( $20 - $2F )

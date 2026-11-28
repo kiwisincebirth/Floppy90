@@ -22,6 +22,61 @@ static const char *s_mappedDirs[10] = {
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
+static bool HasWildcard(const char *s) {
+    return (strchr(s, '*') != NULL);
+}
+
+static bool EndsWithSep(const char *s) {
+    size_t len = strlen(s);
+    if (len == 0) return false;
+    char last = s[len - 1];
+    return (last == '/' || last == '\\');
+}
+
+static bool JoinPath(char *outBuf, size_t outSize, const char *dir, const char *name) {
+    size_t dirLen = strlen(dir);
+    bool needSep = (dirLen > 0 && !EndsWithSep(dir) && dir[dirLen - 1] != ':');
+
+    int written = snprintf(
+        outBuf,
+        outSize,
+        needSep ? "%s/%s" : "%s%s",
+        dir,
+        name
+    );
+
+    return (written > 0 && (size_t)written < outSize);
+}
+
+/*
+ * has_explicit_path_or_sep
+ *
+ * Intent:
+ *   Checks whether a token starts with an explicit path prefix or contains a
+ *   directory separator ('/' or '\'), used to enforce the rule that :N is only
+ *   allowed on plain filename/wildcard arguments without path prefixes/slashes.
+ */
+static bool has_explicit_path_or_sep(const char *s) {
+    if (!s || *s == '\0') return false;
+    if (s[0] == '/' || s[0] == '\\' || s[0] == '.') return true;
+    return (strchr(s, '/') != NULL) || (strchr(s, '\\') != NULL);
+}
+
+static bool append_str(char *dst, size_t dstSize, size_t *pos, const char *src, bool *truncated)
+{
+    while (*src != '\0') {
+        if (*pos + 1 >= dstSize) {
+            if (truncated) *truncated = true;
+            dst[*pos] = '\0';
+            return false;
+        }
+        dst[(*pos)++] = *src++;
+    }
+    dst[*pos] = '\0';
+    return true;
+}
+
+// ======================================================
 
 /**
  * Loads TRS-80 drive assignment mappings from the system assignment
@@ -154,24 +209,6 @@ static const char *get_mapped_dir(uint8_t driveId)
     return s_mappedDirs[validId];
 }
 
-static bool append_str(char *dst, size_t dstSize, size_t *pos, const char *src, bool *truncated)
-{
-    if (dstSize == 0) {
-        if (truncated) *truncated = true;
-        return false;
-    }
-    while (*src != '\0') {
-        if (*pos + 1 >= dstSize) {
-            if (truncated) *truncated = true;
-            dst[*pos] = '\0';
-            return false;
-        }
-        dst[(*pos)++] = *src++;
-    }
-    dst[*pos] = '\0';
-    return true;
-}
-
 static void join_dir_and_name(
     const char *prefix,
     const char *name,
@@ -181,10 +218,6 @@ static void join_dir_and_name(
     bool *truncated)
 {
     size_t pos = 0;
-    if (outSize == 0) {
-        if (truncated) *truncated = true;
-        return;
-    }
     out[0] = '\0';
 
     if (prefix == NULL || prefix[0] == '\0') {
@@ -417,6 +450,11 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
         out->secondary[0] = '\0';
     }
 }
+
+// ===============================================
+// ===============================================
+// ===============================================
+
 
 /*
  * parse_dir_target
@@ -736,51 +774,22 @@ BYTE resolve_delete_spec(
     return TRS_OK;
 }
 
-/*
- * has_explicit_path_or_sep
- *
- * Intent:
- *   Checks whether a token starts with an explicit path prefix or contains a
- *   directory separator ('/' or '\'), used to enforce the rule that :N is only
- *   allowed on plain filename/wildcard arguments without path prefixes/slashes.
- */
-static bool has_explicit_path_or_sep(const char *s) {
-    if (!s || *s == '\0') return false;
-    if (s[0] == '/' || s[0] == '\\' || s[0] == '.') return true;
-    return (strchr(s, '/') != NULL) || (strchr(s, '\\') != NULL);
-}
-
-/*
- * resolve_rename_endpoint
- *
- * Intent:
- *   Resolves a REN/MOVE source or destination argument using parse_dir_target()
- *   while rejecting :N when paired with explicit path prefixes or slashes.
- */
-static BYTE resolve_rename_endpoint(
-    const char *spec,
-    char *outDir,
-    size_t outDirSize,
-    char *outPat,
-    size_t outPatSize,
-    bool *outExplicitTrailingSep,
-    bool *outHadDriveSuffix)
-{
-    if (outExplicitTrailingSep) *outExplicitTrailingSep = false;
-    if (outHadDriveSuffix) *outHadDriveSuffix = false;
-    if (!spec || spec[0] == '\0') {
+BYTE resolve_spec_endpoint(const char *rawSpec, ResolvedEndpoint *out) {
+    memset(out, 0, sizeof(*out));
+    if (!rawSpec || rawSpec[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
 
-    /* Trim trailing whitespace/terminators to inspect syntax cleanly */
     char trimmed[TRS80_PATH_MAX];
-    snprintf(trimmed, sizeof(trimmed), "%s", spec);
+    snprintf(trimmed, sizeof(trimmed), "%s", rawSpec);
+
     size_t len = strlen(trimmed);
     while (len > 0 && (trimmed[len - 1] == ' ' || trimmed[len - 1] == '\t' ||
                        trimmed[len - 1] == '\r' || trimmed[len - 1] == '\n' ||
                        trimmed[len - 1] == 0x03)) {
         trimmed[--len] = '\0';
                        }
+
     char *p = trimmed;
     while (*p == ' ' || *p == '\t') {
         p++;
@@ -790,24 +799,28 @@ static BYTE resolve_rename_endpoint(
         return TRS_ILLEGAL_FILENAME;
     }
 
-    bool trailingSep = (p[len - 1] == '/' || p[len - 1] == '\\');
-    if (outExplicitTrailingSep) *outExplicitTrailingSep = trailingSep;
+    out->trailingSep = (p[len - 1] == '/' || p[len - 1] == '\\');
+    out->hasExplicitPathOrSep = has_explicit_path_or_sep(p);
 
-    bool hasDrive = (len >= 2 && p[len - 2] == ':' &&
-                     p[len - 1] >= '0' && p[len - 1] <= '9');
-    if (outHadDriveSuffix) *outHadDriveSuffix = hasDrive;
-
-    /* Reject :N on explicit path prefixes or multi-segment/slashed paths */
-    if (hasDrive && has_explicit_path_or_sep(p)) {
-        return TRS_ILLEGAL_FILENAME;
+    if (len >= 2 && p[len - 2] == ':') {
+        char d = p[len - 1];
+        if (d >= '1' && d <= '9') {
+            out->hasDrive = true;
+            out->driveId = (uint8_t)(d - '0');
+            if (out->hasExplicitPathOrSep) {
+                return TRS_ILLEGAL_FILENAME;
+            }
+        } else if (d == '0') {
+            return TRS_ILLEGAL_FILENAME;
+        }
     }
 
-    BYTE err = parse_dir_target(p, outDir, outDirSize, outPat, outPatSize);
+    BYTE err = parse_dir_target(p, out->dir, sizeof(out->dir), out->pat, sizeof(out->pat));
     if (err != TRS_OK) {
         return err;
     }
 
-    if (outDir[0] == '\0' || outPat[0] == '\0') {
+    if (out->dir[0] == '\0' || out->pat[0] == '\0') {
         return TRS_ILLEGAL_FILENAME;
     }
 
@@ -893,7 +906,10 @@ BYTE CopySingleFile(const char *srcPath, const char *dstPath) {
     return TRS_OK;
 }
 
-// ---------------------------------------------
+
+// ========================================================
+// ========================================================
+// ========================================================
 
 static bool MatchWildcard(const char *pattern, const char *str) {
     const char *p = pattern;
@@ -921,32 +937,6 @@ static bool MatchWildcard(const char *pattern, const char *str) {
     }
 
     return (*p == '\0');
-}
-
-static bool HasWildcard(const char *s) {
-    return (strchr(s, '*') != NULL);
-}
-
-static bool EndsWithSep(const char *s) {
-    size_t len = strlen(s);
-    if (len == 0) return false;
-    char last = s[len - 1];
-    return (last == '/' || last == '\\');
-}
-
-static bool JoinPath(char *outBuf, size_t outSize, const char *dir, const char *name) {
-    size_t dirLen = strlen(dir);
-    bool needSep = (dirLen > 0 && !EndsWithSep(dir) && dir[dirLen - 1] != ':');
-
-    int written = snprintf(
-        outBuf,
-        outSize,
-        needSep ? "%s/%s" : "%s%s",
-        dir,
-        name
-    );
-
-    return (written > 0 && (size_t)written < outSize);
 }
 
 static void SplitNameExt(const char *name, char *stem, size_t stemCap, char *ext, size_t extCap)
@@ -1366,101 +1356,108 @@ BYTE DeleteFileSpec(const char *delSpec, uint32_t *deletedCount) {
 }
 
 // ========================================================
-// RENAME FILE(s)
+// RENAME MOVE FILE(s)
 // ========================================================
 
-BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount) {
+BYTE RunRenameOrMoveSpec(
+	const char *srcSpec,
+	const char *dstSpec,
+	const RenameMovePolicy *policy,
+	uint32_t *renamedCount)
+{
 	if (renamedCount) *renamedCount = 0;
-	if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
+	if (!srcSpec || !dstSpec || !policy || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
 		return TRS_ILLEGAL_FILENAME;
 	}
 
-	char srcDir[TRS80_PATH_MAX];
-	char srcPat[TRS80_PATH_MAX];
-	bool srcTrailingSep = false;
-	bool srcHasDrive = false;
-	BYTE srcErr = resolve_rename_endpoint(
-		srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat),
-		&srcTrailingSep, &srcHasDrive);
-	if (srcErr != TRS_OK) {
-		return srcErr;
+	ResolvedEndpoint src;
+	ResolvedEndpoint dst;
+
+	BYTE srcErr = resolve_spec_endpoint(srcSpec, &src);
+	if (srcErr != TRS_OK) return srcErr;
+
+	BYTE dstErr = resolve_spec_endpoint(dstSpec, &dst);
+	if (dstErr != TRS_OK) return dstErr;
+
+	/* REN policy: no cross-directory or cross-drive moves */
+	if (!policy->allowMoves) {
+		if (dst.hasExplicitPathOrSep || dst.trailingSep) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+		if (src.hasDrive && dst.hasDrive && src.driveId != dst.driveId) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+		if (!src.hasDrive && dst.hasDrive) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 	}
 
-	char dstDir[TRS80_PATH_MAX];
-	char dstPat[TRS80_PATH_MAX];
-	bool dstTrailingSep = false;
-	bool dstHasDrive = false;
-	BYTE dstErr = resolve_rename_endpoint(
-		dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat),
-		&dstTrailingSep, &dstHasDrive);
-	if (dstErr != TRS_OK) {
-		return dstErr;
+	/* Inherit source directory on unqualified destination when configured (REN) */
+	if (policy->inheritSrcDir && src.hasDrive && !dst.hasDrive && !dst.hasExplicitPathOrSep) {
+		snprintf(dst.dir, sizeof(dst.dir), "%s", src.dir);
 	}
 
-    /* If source used :N and destination is an unprefixed name/pattern without :N,
-     * keep the destination in the source's mapped directory (local rename). */
-    if (srcHasDrive && !dstHasDrive && !has_explicit_path_or_sep(dstSpec)) {
-        snprintf(dstDir, sizeof(dstDir), "%s", srcDir);
-    }
+	bool srcWild = HasWildcard(src.pat);
+	bool dstWild = HasWildcard(dst.pat);
 
-    bool srcWild = HasWildcard(srcPat);
-    bool dstWild = HasWildcard(dstPat);
+	if (!srcWild && !dstWild) {
+		char fullSrc[TRS80_PATH_MAX];
+		char fullDst[TRS80_PATH_MAX];
 
-    /* Non-wildcard rename / move (supports files and directories) */
-    if (!srcWild && !dstWild) {
-        char fullSrc[TRS80_PATH_MAX];
-        char fullDst[TRS80_PATH_MAX];
+		if (!JoinPath(fullSrc, sizeof(fullSrc), src.dir, src.pat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+		FILINFO srcInfo;
+		bool srcIsDir = (f_stat(fullSrc, &srcInfo) == FR_OK && (srcInfo.fattrib & AM_DIR));
 
-        /* Reject :N when source is a directory */
-        FILINFO srcInfo;
-        if (srcHasDrive && f_stat(fullSrc, &srcInfo) == FR_OK && (srcInfo.fattrib & AM_DIR)) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+		/* Reject :N on directory targets */
+		if (src.hasDrive && srcIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        char dstProbe[TRS80_PATH_MAX];
-        if (strcmp(dstPat, "*") == 0 && !dstTrailingSep) {
-            snprintf(dstProbe, sizeof(dstProbe), "%s", dstDir);
-        } else if (!JoinPath(dstProbe, sizeof(dstProbe), dstDir, dstPat)) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+		char dstProbe[TRS80_PATH_MAX];
+		if (strcmp(dst.pat, "*") == 0 && !dst.trailingSep) {
+			snprintf(dstProbe, sizeof(dstProbe), "%s", dst.dir);
+		} else if (!JoinPath(dstProbe, sizeof(dstProbe), dst.dir, dst.pat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        FILINFO dstInfo;
-        FRESULT dstStat = f_stat(dstProbe, &dstInfo);
-        bool dstIsDir = dstTrailingSep || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR));
+		FILINFO dstInfo;
+		FRESULT dstStat = f_stat(dstProbe, &dstInfo);
+		bool dstIsDir = dst.trailingSep || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR));
 
-        /* Reject :N when destination is a directory */
-        if (dstHasDrive && dstIsDir) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+		if (dst.hasDrive && dstIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        if (dstIsDir) {
-            if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, srcPat)) {
-                return TRS_ILLEGAL_FILENAME;
-            }
-        } else {
-            snprintf(fullDst, sizeof(fullDst), "%s", dstProbe);
-        }
+		if (srcIsDir && !policy->allowDirs) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        if (strcmp(fullSrc, fullDst) == 0) {
-            return TRS_OK;
-        }
+		if (dstIsDir) {
+			if (!policy->allowMoves) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+			if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, src.pat)) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+		} else {
+			snprintf(fullDst, sizeof(fullDst), "%s", dstProbe);
+		}
 
-        BYTE err = FileRename(fullSrc, fullDst);
-        if (err == TRS_OK && renamedCount) (*renamedCount)++;
-        return err;
-    }
+		if (strcmp(fullSrc, fullDst) == 0) {
+			return TRS_OK;
+		}
 
-	/* Wildcard rename requires a wildcard pattern in source */
+		BYTE err = FileRename(fullSrc, fullDst);
+		if (err == TRS_OK && renamedCount) (*renamedCount)++;
+		return err;
+	}
+
 	if (!srcWild) {
 		return TRS_ILLEGAL_FILENAME;
 	}
-
-	/* Wildcard passes apply to files only (skip subdirectories) */
-	bool allowDirs = false;
 
 	DIR *dir = (DIR *)malloc(sizeof(DIR));
 	FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
@@ -1470,7 +1467,7 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
 		return TRS_DEVICE_NOT_AVAIL;
 	}
 
-	FRESULT fr = f_opendir(dir, srcDir);
+	FRESULT fr = f_opendir(dir, src.dir);
 	if (fr != FR_OK) {
 		free(dir);
 		free(fno);
@@ -1489,28 +1486,28 @@ BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedC
 			trsResult = TRS_OK;
 			break;
 		}
-		if (ShouldSkipEntry(fno, allowDirs)) {
+		if (ShouldSkipEntry(fno, false)) {
 			continue;
 		}
 
-		if (MatchWildcard(srcPat, fno->fname)) {
+		if (MatchWildcard(src.pat, fno->fname)) {
 			char fullSrc[TRS80_PATH_MAX];
 			char fullDst[TRS80_PATH_MAX];
 			char mappedName[TRS80_PATH_MAX];
 
-			if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
+			if (!JoinPath(fullSrc, sizeof(fullSrc), src.dir, fno->fname)) {
 				trsResult = TRS_ILLEGAL_FILENAME;
 				break;
 			}
 
 			if (dstWild) {
-				if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
-				    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
+				if (!ApplyDestWildcard(dst.pat, fno->fname, mappedName, sizeof(mappedName)) ||
+				    !JoinPath(fullDst, sizeof(fullDst), dst.dir, mappedName)) {
 					trsResult = TRS_ILLEGAL_FILENAME;
 					break;
 				}
 			} else {
-				if (!JoinPath(fullDst, sizeof(fullDst), dstDir, fno->fname)) {
+				if (!JoinPath(fullDst, sizeof(fullDst), dst.dir, fno->fname)) {
 					trsResult = TRS_ILLEGAL_FILENAME;
 					break;
 				}
