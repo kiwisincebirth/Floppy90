@@ -912,6 +912,27 @@ BYTE CopySingleFile(const char *srcPath, const char *dstPath) {
 // ========================================================
 
 static bool MatchWildcard(const char *pattern, const char *str) {
+    if (!pattern || !str) {
+        return false;
+    }
+
+    size_t patLen = strlen(pattern);
+    if (patLen > 0 && pattern[patLen - 1] == '.') {
+        /* Trailing '.' means "no extension": reject names containing a '.' */
+        if (strchr(str, '.') != NULL) {
+            return false;
+        }
+
+        char stemPat[64];
+        size_t stemLen = patLen - 1;
+        if (stemLen >= sizeof(stemPat)) {
+            return false;
+        }
+        memcpy(stemPat, pattern, stemLen);
+        stemPat[stemLen] = '\0';
+        return MatchWildcard(stemPat, str);
+    }
+
     const char *p = pattern;
     const char *s = str;
     const char *starP = NULL;
@@ -1020,7 +1041,16 @@ static bool ApplyDestWildcard(const char *dstPat, const char *srcFilename, char 
             return false;
         }
     } else {
-        outExt[0] = '\0';
+        const char *dstDot = strchr(dstPat, '.');
+        if (dstDot) {
+            if (!ApplyWildcardSegment(patExt, srcExt, outExt, sizeof(outExt))) {
+                return false;
+            }
+        } else if (srcExt[0] != '\0') {
+            snprintf(outExt, sizeof(outExt), "%s", srcExt);
+        } else {
+            outExt[0] = '\0';
+        }
     }
 
     if (outExt[0] != '\0') {
@@ -1459,6 +1489,33 @@ BYTE RunRenameOrMoveSpec(
 		return TRS_ILLEGAL_FILENAME;
 	}
 
+	/* Determine destination directory for wildcard moves/renames */
+	char wildDstDir[TRS80_PATH_MAX];
+	if (dstWild) {
+		snprintf(wildDstDir, sizeof(wildDstDir), "%s", dst.dir);
+	} else {
+		char dstProbe[TRS80_PATH_MAX];
+		if (strcmp(dst.pat, "*") == 0 && !dst.trailingSep) {
+			snprintf(dstProbe, sizeof(dstProbe), "%s", dst.dir);
+		} else if (!JoinPath(dstProbe, sizeof(dstProbe), dst.dir, dst.pat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+
+		FILINFO dstInfo;
+		FRESULT dstStat = f_stat(dstProbe, &dstInfo);
+		bool dstIsDir = dst.trailingSep || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR));
+
+		if (dst.hasDrive && dstIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+
+		if (!dstIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+
+		snprintf(wildDstDir, sizeof(wildDstDir), "%s", dstProbe);
+	}
+
 	DIR *dir = (DIR *)malloc(sizeof(DIR));
 	FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
 	if (!dir || !fno) {
@@ -1502,18 +1559,18 @@ BYTE RunRenameOrMoveSpec(
 
 			if (dstWild) {
 				if (!ApplyDestWildcard(dst.pat, fno->fname, mappedName, sizeof(mappedName)) ||
-				    !JoinPath(fullDst, sizeof(fullDst), dst.dir, mappedName)) {
+				    !JoinPath(fullDst, sizeof(fullDst), wildDstDir, mappedName)) {
 					trsResult = TRS_ILLEGAL_FILENAME;
 					break;
 				}
 			} else {
-				if (!JoinPath(fullDst, sizeof(fullDst), dst.dir, fno->fname)) {
+				if (!JoinPath(fullDst, sizeof(fullDst), wildDstDir, fno->fname)) {
 					trsResult = TRS_ILLEGAL_FILENAME;
 					break;
 				}
 			}
 
-			BYTE renErr = FileRename(fullSrc, fullDst);
+		    BYTE renErr = FileRename(fullSrc, fullDst);
 			if (renErr != TRS_OK) {
 				trsResult = renErr;
 				break;
