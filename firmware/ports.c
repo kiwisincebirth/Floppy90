@@ -410,22 +410,24 @@ byte __not_in_flash_func(CMD_DIR)(byte step)
 			need_parse = 0;
 		}
 
-        if (dir_findfirst) {
-            if (dir_open) {
-                f_closedir(&dir);
-                dir_open = 0;
-            }
+		if (dir_findfirst) {
+			if (dir_open) {
+				f_closedir(&dir);
+				dir_open = 0;
+			}
 
-            fhd_error2 = DirFindFirst(&dir, &fno, target_dir, file_pattern);
-            dir_findfirst = 0;
-        } else {
-            fhd_error2 = DirFindNext(&dir, &fno);
-        }
+			fhd_error2 = DirFindFirst(&dir, &fno, target_dir, "*");
+			dir_findfirst = 0;
+		} else {
+			fhd_error2 = DirFindNext(&dir, &fno);
+		}
 
-        while (fhd_error2 == TRS_OK && fno.fname[0] != 0 &&
-               ((fno.fattrib & AM_HID_SYS) || fno.fname[0] == '.')) {
-            fhd_error2 = DirFindNext(&dir, &fno);
-        }
+		while (fhd_error2 == TRS_OK && fno.fname[0] != 0 &&
+			   ((fno.fattrib & AM_HID_SYS) ||
+				fno.fname[0] == '.' ||
+				!MatchWildcard(file_pattern, fno.fname))) {
+			fhd_error2 = DirFindNext(&dir, &fno);
+		}
 
         if (fhd_error2 == TRS_OK) {
             dir_open = 1;

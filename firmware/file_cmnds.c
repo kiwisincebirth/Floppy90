@@ -640,18 +640,64 @@ BYTE parse_dir_target(
         return TRS_OK;
     }
 
-    /* 3. Non-prefixed filter/wildcard with optional :N */
+    /* 3. Non-prefixed relative path/filter/wildcard with optional :N */
+    const char *baseDir = ".";
     if (hasDriveSuffix && driveId >= 1) {
         const char *mapped = trs80_get_mapped_dir(driveId);
         if (!mapped || mapped[0] == '\0') {
             return TRS_DEVICE_NOT_AVAIL;
         }
-        snprintf(outDir, outDirSize, "%s", mapped);
-    } else {
-        snprintf(outDir, outDirSize, ".");
+        baseDir = mapped;
     }
 
-    snprintf(outPattern, outPatternSize, "%s", p);
+    /* Strip trailing slashes if present */
+    size_t plen = strlen(p);
+    while (plen > 0 && p[plen - 1] == '/') {
+        p[--plen] = '\0';
+    }
+    if (*p == '\0') {
+        snprintf(outDir, outDirSize, "%s", baseDir);
+        snprintf(outPattern, outPatternSize, "*");
+        return TRS_OK;
+    }
+
+    /* If p itself is a directory under baseDir, list all files in it */
+    char candidate[TRS80_PATH_MAX];
+    if (strcmp(baseDir, ".") == 0) {
+        snprintf(candidate, sizeof(candidate), "%s", p);
+    } else if (strcmp(baseDir, "/") == 0) {
+        snprintf(candidate, sizeof(candidate), "/%s", p);
+    } else {
+        snprintf(candidate, sizeof(candidate), "%s/%s", baseDir, p);
+    }
+
+    FILINFO st;
+    if (f_stat(candidate, &st) == FR_OK && (st.fattrib & AM_DIR)) {
+        snprintf(outDir, outDirSize, "%s", candidate);
+        snprintf(outPattern, outPatternSize, "*");
+        return TRS_OK;
+    }
+
+    /* Otherwise split on the last '/' */
+    char *slash = strrchr(p, '/');
+    if (slash) {
+        const char *pat = slash + 1;
+        *slash = '\0';
+        if (*p == '\0') {
+            snprintf(outDir, outDirSize, "%s", baseDir);
+        } else if (strcmp(baseDir, ".") == 0) {
+            snprintf(outDir, outDirSize, "%s", p);
+        } else if (strcmp(baseDir, "/") == 0) {
+            snprintf(outDir, outDirSize, "/%s", p);
+        } else {
+            snprintf(outDir, outDirSize, "%s/%s", baseDir, p);
+        }
+        snprintf(outPattern, outPatternSize, "%s", (*pat != '\0') ? pat : "*");
+    } else {
+        snprintf(outDir, outDirSize, "%s", baseDir);
+        snprintf(outPattern, outPatternSize, "%s", p);
+    }
+
     return TRS_OK;
 }
 
@@ -911,7 +957,7 @@ BYTE CopySingleFile(const char *srcPath, const char *dstPath) {
 // ========================================================
 // ========================================================
 
-static bool MatchWildcard(const char *pattern, const char *str) {
+bool MatchWildcard(const char *pattern, const char *str) {
     if (!pattern || !str) {
         return false;
     }

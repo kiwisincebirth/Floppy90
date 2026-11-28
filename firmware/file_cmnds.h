@@ -75,6 +75,8 @@ BYTE resolve_spec_endpoint(
     const char *rawSpec,
     ResolvedEndpoint *out);
 
+bool MatchWildcard(const char *pattern, const char *str);
+
 // =============================
 
 /**
