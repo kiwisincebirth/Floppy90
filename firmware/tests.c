@@ -11,6 +11,7 @@
 
 #include "defines.h"
 #include "file.h"
+#include "file_cmnds.h"
 
 
 typedef struct {
@@ -21,87 +22,71 @@ typedef struct {
 } TestCase;
 
 
+typedef struct {
+	const char *srcSpec;
+	const char *dstSpec;
+	RenameMovePolicy policy;
+	BYTE expectedErr;
+	uint32_t expectedCount;
+	const char *label;
+} RenameMoveTestCase;
 
-void run_sanitizer_tests() {
-    TestCase tests[] = {
-        // --- 1. PURE LEGACY TRS-80 FORMATS ---
-        {"MYGAME/BASS",         "MYGAME/BASS",    0, "Standard Legacy"},
-        {"MYGAME/BAS",          "MYGAME.BAS",     0, "Standard Legacy"},
-        {"MYGAME/BA",           "MYGAME.BA",      0, "Standard Legacy"},
-	{"DIR/MYGAME/BASS",     "DIR/MYGAME/BASS",0, "Standard Legacy"},
-	{"DIR/MYGAME/BAS",      "DIR/MYGAME.BAS", 0, "Standard Legacy"},
-	{"DIR/MYGAME/BA",       "DIR/MYGAME.BA",  0, "Standard Legacy"},
+static void run_endpoint_tests(void) {
+	struct {
+		const char *input;
+		BYTE expectedErr;
+		bool expectedHasDrive;
+		uint8_t expectedDriveId;
+		bool expectedTrailingSep;
+		bool expectedExplicitPathOrSep;
+		const char *label;
+	} cases[] = {
+		{ "HELLO.BAS:1",      TRS_OK,                 true,  1, false, false, "Drive :1" },
+		{ "DOCS/README.TXT:3", TRS_ILLEGAL_FILENAME,  true,  3, false, true,  "Drive :3 with slash rejected" },
+		{ "/SYS/SYS0.SYS:2",   TRS_ILLEGAL_FILENAME,  true,  2, false, true,  "Leading slash + :2 rejected" },
+		{ "./FILE.BAS:1",      TRS_ILLEGAL_FILENAME,  true,  1, false, true,  "Dot prefix + :1 rejected" },
+		{ "FILE.BAS:0",        TRS_ILLEGAL_FILENAME,  false, 0, false, false, "Drive :0 rejected" },
+		{ "*.BAS:1",           TRS_OK,                 true,  1, false, false, "Wildcard with :1" },
+		{ "DIR/SUBDIR/",       TRS_OK,                 false, 0, true,  true,  "Trailing slash" },
+		{ "END/IT\x03",        TRS_OK,                 false, 0, false, true,  "ETX terminator" },
+	};
 
-    	{"DATA/TXT:1",          "DATA.TXT",       1, "Legacy with Drive"},
+	int numCases = (int)(sizeof(cases) / sizeof(cases[0]));
+	int passed = 0;
 
-    	{"VISICALC/CMD.PASSS",  "VISICALC.CMD",   0, "Legacy with Password"},
-        {"VISICALC/CMD.PASS",   "VISICALC.CMD",   0, "Legacy with Password"},
-        {"VISICALC/CMD.PAS",    "VISICALC/CMD.PAS",0, "Legacy with Password"},
-        {"VISICALC/CMD.PA",     "VISICALC/CMD.PA",0, "Legacy with Password"},
-        {"VISICALC/CMD.P",      "VISICALC/CMD.P", 0, "Legacy with Password"},
+	printf("\n--- Endpoint Resolver Unit Tests ---\n");
+	printf("%-20s | %-6s | %-5s | %-4s | %s\n", "Input", "Status", "Drive", "Sep", "Result");
+	printf("----------------------------------------------------------------------\n");
 
-    	{"FILE/TXT:2.PWD",      "FILE.TXT",       2, "Legacy + Drive + Pwd"},
-        {"A:1",                 "A",              1, "Short Legacy"},
-        {"A/B:1",               "A.B",            1, "Short Legacy"},
-        {"A/BB:1",              "A.BB",           1, "Short Legacy"},
-        {"A/BBB:1",             "A.BBB",          1, "Short Legacy"},
-        {"A/BBBB:1",            "A/BBBB",         1, "Short Legacy"},
+	for (int i = 0; i < numCases; i++) {
+		ResolvedEndpoint ep;
+		BYTE err = resolve_spec_endpoint(cases[i].input, &ep);
 
-        // --- 2. PURE MODERN FAT FORMATS ---
-        {"SYS/SYS0.SYS",        "SYS/SYS0.SYS",   0, "Modern Path + Dot"},
-        {"/SYS/SYS0.SYS",       "/SYS/SYS0.SYS",  0, "Modern Path + Dot"},
-        {"./SYS/SYS0.SYS",      "./SYS/SYS0.SYS", 0, "Modern Path + Dot"},
-        {"../SYS/SYS0.SYS",     "../SYS/SYS0.SYS",0, "Modern Path + Dot"},
-        {"../../SYS/SYS0.SYS",  "../../SYS/SYS0.SYS",0, "Modern Path + Dot"},
-        {"/SYS/SYS0.SYS",       "/SYS/SYS0.SYS",  0, "Modern Path + Dot"},
+		bool ok = (err == cases[i].expectedErr) &&
+		          (ep.hasDrive == cases[i].expectedHasDrive) &&
+		          (ep.driveId == cases[i].expectedDriveId) &&
+		          (ep.trailingSep == cases[i].expectedTrailingSep) &&
+		          (ep.hasExplicitPathOrSep == cases[i].expectedExplicitPathOrSep);
 
-        {"GAMES/ZAXON.BIN",     "GAMES/ZAXON.BIN",0, "Modern Subdir + Dot"},
-        {"DOCS/README.TXT:3",   "DOCS/README.TXT",3, "Modern + Drive"},
-        {"SETUP.EXE.BACKUP",    "SETUP.EXE",      0, "Modern + Password (Truncated)"},
+		if (ok) {
+			printf("%-20s | %-6u | %-5u | %-4d | [PASS] %s\n",
+			       cases[i].input, (unsigned)err, (unsigned)ep.driveId,
+			       ep.trailingSep ? 1 : 0, cases[i].label);
+			passed++;
+		} else {
+			printf("%-20s | %-6u | %-5u | %-4d | [FAIL] %s (exp err=%u d=%u)\n",
+			       cases[i].input, (unsigned)err, (unsigned)ep.driveId,
+			       ep.trailingSep ? 1 : 0, cases[i].label,
+			       (unsigned)cases[i].expectedErr, (unsigned)cases[i].expectedDriveId);
+		}
+	}
 
-        // --- 3. TERMINATOR TESTS ---
-        {"TERMINAT/OR\x0D",     "TERMINAT.OR",    0, "Ending in CR (0x0D)"},
-        {"END/IT\x03:5",        "END.IT",         0, "Ending in ETX (0x03)"},
-
-        // --- 4. NO EXTENSION / SPECIALS ---
-        {"SYSTEM",              "SYSTEM",         0, "No Extension"},
-        {"DIR/SUBDIR/",         "DIR/SUBDIR/",    0, "Trailing Slash (Directory)"},
-        {":9",                  "",               9, "Drive Only"}
-    };
-
-    int numTests = sizeof(tests) / sizeof(tests[0]);
-    int passed = 0;
-
-    printf("\n--- TRS-80 Path Sanitizer Unit Tests ---\n");
-    printf("%-20s | %-20s | %-5s | %s\n", "Input", "Output", "Drive", "Result");
-    printf("----------------------------------------------------------------------\n");
-
-    for (int i = 0; i < numTests; i++) {
-        char resultPath[33];
-        byte resultDrive = 0xFF;
-
-        sanitizeTrs80Path(tests[i].input, resultPath, &resultDrive, 32);
-
-        bool pathMatch = (strcmp(resultPath, tests[i].expectedPath) == 0);
-        bool driveMatch = (resultDrive == tests[i].expectedDrive);
-
-        if (pathMatch && driveMatch) {
-            printf("%-20s | %-20s | %-5d | [PASS]\n",
-                    tests[i].input, resultPath, resultDrive);
-            passed++;
-        } else {
-            printf("%-20s | %-20s | %-5d | [FAIL] <- Expected: %s (D:%d)\n",
-                    tests[i].input, resultPath, resultDrive,
-                    tests[i].expectedPath, tests[i].expectedDrive);
-        }
-    }
-
-    printf("----------------------------------------------------------------------\n");
-    printf("FINAL RESULT: %d/%d PASSED\n\n", passed, numTests);
+	printf("----------------------------------------------------------------------\n");
+	printf("ENDPOINT RESULT: %d/%d PASSED\n\n", passed, numCases);
 }
 
 void RunUnitTests(void)
 {
 	printf("Running Unit Tests\n");
-	run_sanitizer_tests();
+	run_endpoint_tests();
 }

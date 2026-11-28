@@ -25,6 +25,21 @@ typedef struct {
     bool truncated;                     /* True if any output buffer hit its capacity limit */
 } Trs80PathResult;
 
+typedef struct {
+    bool inheritSrcDir; /* true for REN (in-place default), false for MOVE */
+    bool allowMoves;    /* false for REN (reject path/drive moves), true for MOVE */
+    bool allowDirs;     /* true for non-wildcard directory rename/move */
+} RenameMovePolicy;
+
+typedef struct {
+    char dir[TRS80_PATH_MAX];
+    char pat[TRS80_PATH_MAX];
+    bool trailingSep;
+    bool hasDrive;
+    uint8_t driveId;
+    bool hasExplicitPathOrSep;
+} ResolvedEndpoint;
+
 // =============================
 
 /* Load Configuration */
@@ -56,13 +71,11 @@ BYTE resolve_delete_spec(
     char *outSpec,
     size_t outSpecSize);
 
-// =============================
+BYTE resolve_spec_endpoint(
+    const char *rawSpec,
+    ResolvedEndpoint *out);
 
-/**
- * Copies a single file from srcPath to dstPath.
- * Returns FR_OK on success, or a FatFs FRESULT error code.
- */
-BYTE CopySingleFile(const char *srcPath, const char *dstPath);
+// =============================
 
 /**
  * Copies one or more files matching srcSpec to dstSpec.
@@ -95,6 +108,6 @@ BYTE DeleteFileSpec(const char *delSpec, uint32_t *deletedCount);
  * @param renamedCount  Optional counter updated with the number of items renamed.
  * @return              TRS_OK (0) on success, or a TRS-* error code on failure.
  */
-BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount);
+BYTE RunRenameOrMoveSpec(const char *srcSpec, const char *dstSpec, const RenameMovePolicy *policy,uint32_t *renamedCount);
 
 #endif //FLOPPY90_FILE_COPY_H

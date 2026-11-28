@@ -22,6 +22,61 @@ static const char *s_mappedDirs[10] = {
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
+static bool HasWildcard(const char *s) {
+    return (strchr(s, '*') != NULL);
+}
+
+static bool EndsWithSep(const char *s) {
+    size_t len = strlen(s);
+    if (len == 0) return false;
+    char last = s[len - 1];
+    return (last == '/' || last == '\\');
+}
+
+static bool JoinPath(char *outBuf, size_t outSize, const char *dir, const char *name) {
+    size_t dirLen = strlen(dir);
+    bool needSep = (dirLen > 0 && !EndsWithSep(dir) && dir[dirLen - 1] != ':');
+
+    int written = snprintf(
+        outBuf,
+        outSize,
+        needSep ? "%s/%s" : "%s%s",
+        dir,
+        name
+    );
+
+    return (written > 0 && (size_t)written < outSize);
+}
+
+/*
+ * has_explicit_path_or_sep
+ *
+ * Intent:
+ *   Checks whether a token starts with an explicit path prefix or contains a
+ *   directory separator ('/' or '\'), used to enforce the rule that :N is only
+ *   allowed on plain filename/wildcard arguments without path prefixes/slashes.
+ */
+static bool has_explicit_path_or_sep(const char *s) {
+    if (!s || *s == '\0') return false;
+    if (s[0] == '/' || s[0] == '\\' || s[0] == '.') return true;
+    return (strchr(s, '/') != NULL) || (strchr(s, '\\') != NULL);
+}
+
+static bool append_str(char *dst, size_t dstSize, size_t *pos, const char *src, bool *truncated)
+{
+    while (*src != '\0') {
+        if (*pos + 1 >= dstSize) {
+            if (truncated) *truncated = true;
+            dst[*pos] = '\0';
+            return false;
+        }
+        dst[(*pos)++] = *src++;
+    }
+    dst[*pos] = '\0';
+    return true;
+}
+
+// ======================================================
 
 /**
  * Loads TRS-80 drive assignment mappings from the system assignment
@@ -154,24 +209,6 @@ static const char *get_mapped_dir(uint8_t driveId)
     return s_mappedDirs[validId];
 }
 
-static bool append_str(char *dst, size_t dstSize, size_t *pos, const char *src, bool *truncated)
-{
-    if (dstSize == 0) {
-        if (truncated) *truncated = true;
-        return false;
-    }
-    while (*src != '\0') {
-        if (*pos + 1 >= dstSize) {
-            if (truncated) *truncated = true;
-            dst[*pos] = '\0';
-            return false;
-        }
-        dst[(*pos)++] = *src++;
-    }
-    dst[*pos] = '\0';
-    return true;
-}
-
 static void join_dir_and_name(
     const char *prefix,
     const char *name,
@@ -181,10 +218,6 @@ static void join_dir_and_name(
     bool *truncated)
 {
     size_t pos = 0;
-    if (outSize == 0) {
-        if (truncated) *truncated = true;
-        return;
-    }
     out[0] = '\0';
 
     if (prefix == NULL || prefix[0] == '\0') {
@@ -417,6 +450,11 @@ void trs80_resolve_path(const char *src, int maxLen, Trs80PathResult *out)
         out->secondary[0] = '\0';
     }
 }
+
+// ===============================================
+// ===============================================
+// ===============================================
+
 
 /*
  * parse_dir_target
@@ -736,6 +774,59 @@ BYTE resolve_delete_spec(
     return TRS_OK;
 }
 
+BYTE resolve_spec_endpoint(const char *rawSpec, ResolvedEndpoint *out) {
+    memset(out, 0, sizeof(*out));
+    if (!rawSpec || rawSpec[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    char trimmed[TRS80_PATH_MAX];
+    snprintf(trimmed, sizeof(trimmed), "%s", rawSpec);
+
+    size_t len = strlen(trimmed);
+    while (len > 0 && (trimmed[len - 1] == ' ' || trimmed[len - 1] == '\t' ||
+                       trimmed[len - 1] == '\r' || trimmed[len - 1] == '\n' ||
+                       trimmed[len - 1] == 0x03)) {
+        trimmed[--len] = '\0';
+                       }
+
+    char *p = trimmed;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    len = strlen(p);
+    if (len == 0) {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    out->trailingSep = (p[len - 1] == '/' || p[len - 1] == '\\');
+    out->hasExplicitPathOrSep = has_explicit_path_or_sep(p);
+
+    if (len >= 2 && p[len - 2] == ':') {
+        char d = p[len - 1];
+        if (d >= '1' && d <= '9') {
+            out->hasDrive = true;
+            out->driveId = (uint8_t)(d - '0');
+            if (out->hasExplicitPathOrSep) {
+                return TRS_ILLEGAL_FILENAME;
+            }
+        } else if (d == '0') {
+            return TRS_ILLEGAL_FILENAME;
+        }
+    }
+
+    BYTE err = parse_dir_target(p, out->dir, sizeof(out->dir), out->pat, sizeof(out->pat));
+    if (err != TRS_OK) {
+        return err;
+    }
+
+    if (out->dir[0] == '\0' || out->pat[0] == '\0') {
+        return TRS_ILLEGAL_FILENAME;
+    }
+
+    return TRS_OK;
+}
+
 // ========================================================
 // COPY SINGLE FILE
 // ========================================================
@@ -815,7 +906,10 @@ BYTE CopySingleFile(const char *srcPath, const char *dstPath) {
     return TRS_OK;
 }
 
-// ---------------------------------------------
+
+// ========================================================
+// ========================================================
+// ========================================================
 
 static bool MatchWildcard(const char *pattern, const char *str) {
     const char *p = pattern;
@@ -843,32 +937,6 @@ static bool MatchWildcard(const char *pattern, const char *str) {
     }
 
     return (*p == '\0');
-}
-
-static bool HasWildcard(const char *s) {
-    return (strchr(s, '*') != NULL);
-}
-
-static bool EndsWithSep(const char *s) {
-    size_t len = strlen(s);
-    if (len == 0) return false;
-    char last = s[len - 1];
-    return (last == '/' || last == '\\');
-}
-
-static bool JoinPath(char *outBuf, size_t outSize, const char *dir, const char *name) {
-    size_t dirLen = strlen(dir);
-    bool needSep = (dirLen > 0 && !EndsWithSep(dir) && dir[dirLen - 1] != ':');
-
-    int written = snprintf(
-        outBuf,
-        outSize,
-        needSep ? "%s/%s" : "%s%s",
-        dir,
-        name
-    );
-
-    return (written > 0 && (size_t)written < outSize);
 }
 
 static void SplitNameExt(const char *name, char *stem, size_t stemCap, char *ext, size_t extCap)
@@ -1029,161 +1097,160 @@ static bool ShouldSkipEntry(const FILINFO *fno, bool allowDirs) {
  * Returns FR_OK on full completion (including 0 matches), or the error code on failure.
  */
 BYTE CopyFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *copiedCount) {
-    if (copiedCount) *copiedCount = 0;
+	if (copiedCount) *copiedCount = 0;
 
-    if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
-        return TRS_ILLEGAL_FILENAME;
-    }
+	if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-    char srcDir[TRS80_PATH_MAX];
-    char srcPat[TRS80_PATH_MAX];
-    bool srcTrailingSep = false;
-    BYTE srcErr = resolve_copy_endpoint(
-        srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat), &srcTrailingSep);
-    if (srcErr != TRS_OK) {
-        return srcErr;
-    }
+	char srcDir[TRS80_PATH_MAX];
+	char srcPat[TRS80_PATH_MAX];
+	bool srcTrailingSep = false;
+	BYTE srcErr = resolve_copy_endpoint(
+		srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat), &srcTrailingSep);
+	if (srcErr != TRS_OK) {
+		return srcErr;
+	}
 
-    /* A source ending in '/' or '\' names a directory, not a file or wildcard */
-    if (srcTrailingSep) {
-        return TRS_ILLEGAL_FILENAME;
-    }
+	/* Source ending in '/' or '\' indicates a directory rather than a file or pattern */
+	if (srcTrailingSep) {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-    char dstDir[TRS80_PATH_MAX];
-    char dstPat[TRS80_PATH_MAX];
-    bool dstTrailingSep = false;
-    BYTE dstErr = resolve_copy_endpoint(
-        dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat), &dstTrailingSep);
-    if (dstErr != TRS_OK) {
-        return dstErr;
-    }
+	char dstDir[TRS80_PATH_MAX];
+	char dstPat[TRS80_PATH_MAX];
+	bool dstTrailingSep = false;
+	BYTE dstErr = resolve_copy_endpoint(
+		dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat), &dstTrailingSep);
+	if (dstErr != TRS_OK) {
+		return dstErr;
+	}
 
-    bool wildcard = HasWildcard(srcPat);
-    bool dstHasWildcard = HasWildcard(dstPat);
+	bool wildcard = HasWildcard(srcPat);
+	bool dstHasWildcard = HasWildcard(dstPat);
 
-    /* Determine whether destination refers to an existing directory or trailing slash */
-    char dstProbe[TRS80_PATH_MAX];
-    if (strcmp(dstPat, "*") == 0 && !dstTrailingSep) {
-        snprintf(dstProbe, sizeof(dstProbe), "%s", dstDir);
-    } else if (!JoinPath(dstProbe, sizeof(dstProbe), dstDir, dstPat)) {
-        return TRS_ILLEGAL_FILENAME;
-    }
+	char dstProbe[TRS80_PATH_MAX];
+	if (strcmp(dstPat, "*") == 0 && !dstTrailingSep) {
+		snprintf(dstProbe, sizeof(dstProbe), "%s", dstDir);
+	} else if (!JoinPath(dstProbe, sizeof(dstProbe), dstDir, dstPat)) {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-    FILINFO dstInfo;
-    FRESULT dstStatFr = f_stat(dstProbe, &dstInfo);
-    bool dstIsDir = dstTrailingSep ||
-                    (dstStatFr == FR_OK && (dstInfo.fattrib & AM_DIR));
+	FILINFO dstInfo;
+	FRESULT dstStatFr = f_stat(dstProbe, &dstInfo);
+	bool dstIsDir = dstTrailingSep ||
+	                (dstStatFr == FR_OK && (dstInfo.fattrib & AM_DIR));
 
-    /* Wildcard source requires a destination directory or a destination wildcard */
-    if (wildcard && !dstIsDir && !dstHasWildcard) {
-        return TRS_ILLEGAL_FILENAME;
-    }
+	/* Wildcard source requires a destination directory or a destination wildcard */
+	if (wildcard && !dstIsDir && !dstHasWildcard) {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-    /* Single (non-wildcard) source */
-    if (!wildcard) {
-        char fullSrc[TRS80_PATH_MAX];
-        char fullDst[TRS80_PATH_MAX];
+	/* Single (non-wildcard) source */
+	if (!wildcard) {
+		char fullSrc[TRS80_PATH_MAX];
+		char fullDst[TRS80_PATH_MAX];
 
-        if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+		if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-        if (dstIsDir) {
-            if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, srcPat)) {
-                return TRS_ILLEGAL_FILENAME;
-            }
-        } else if (dstHasWildcard) {
-            char mappedName[TRS80_PATH_MAX];
-            if (!ApplyDestWildcard(dstPat, srcPat, mappedName, sizeof(mappedName)) ||
-                !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
-                return TRS_ILLEGAL_FILENAME;
-            }
-        } else {
-            if (!JoinPath(fullDst, sizeof(fullDst), dstDir, dstPat)) {
-                return TRS_ILLEGAL_FILENAME;
-            }
-        }
+		if (dstIsDir) {
+			if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, srcPat)) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+		} else if (dstHasWildcard) {
+			char mappedName[TRS80_PATH_MAX];
+			if (!ApplyDestWildcard(dstPat, srcPat, mappedName, sizeof(mappedName)) ||
+			    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+		} else {
+			if (!JoinPath(fullDst, sizeof(fullDst), dstDir, dstPat)) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+		}
 
-        BYTE trsErr = CopySingleFile(fullSrc, fullDst);
-        if (trsErr == TRS_OK) {
-            if (copiedCount) *copiedCount = 1;
-            return TRS_OK;
-        }
-        return trsErr;
-    }
+		BYTE trsErr = CopySingleFile(fullSrc, fullDst);
+		if (trsErr == TRS_OK) {
+			if (copiedCount) *copiedCount = 1;
+			return TRS_OK;
+		}
+		return trsErr;
+	}
 
-    /* Wildcard source directory scan */
-    DIR *dir = (DIR *)malloc(sizeof(DIR));
-    FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
-    if (!dir || !fno) {
-        free(dir);
-        free(fno);
-        return TRS_DEVICE_NOT_AVAIL;
-    }
+	/* Wildcard source directory scan */
+	DIR *dir = (DIR *)malloc(sizeof(DIR));
+	FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
+	if (!dir || !fno) {
+		free(dir);
+		free(fno);
+		return TRS_DEVICE_NOT_AVAIL;
+	}
 
-    FRESULT fr = f_opendir(dir, srcDir);
-    if (fr != FR_OK) {
-        free(dir);
-        free(fno);
-        return trans(fr);
-    }
+	FRESULT fr = f_opendir(dir, srcDir);
+	if (fr != FR_OK) {
+		free(dir);
+		free(fno);
+		return trans(fr);
+	}
 
-    BYTE trsResult = TRS_OK;
+	BYTE trsResult = TRS_OK;
 
-    while (1) {
-        fr = f_readdir(dir, fno);
-        if (fr != FR_OK) {
-            trsResult = trans(fr);
-            break;
-        }
-        if (fno->fname[0] == '\0') {
-            trsResult = TRS_OK;
-            break;
-        }
+	while (1) {
+		fr = f_readdir(dir, fno);
+		if (fr != FR_OK) {
+			trsResult = trans(fr);
+			break;
+		}
+		if (fno->fname[0] == '\0') {
+			trsResult = TRS_OK;
+			break;
+		}
 
-        if (ShouldSkipEntry(fno, false)) {
-            continue;
-        }
+		if (ShouldSkipEntry(fno, false)) {
+			continue;
+		}
 
-        if (MatchWildcard(srcPat, fno->fname)) {
-            char fullSrc[TRS80_PATH_MAX];
-            char fullDst[TRS80_PATH_MAX];
+		if (MatchWildcard(srcPat, fno->fname)) {
+			char fullSrc[TRS80_PATH_MAX];
+			char fullDst[TRS80_PATH_MAX];
 
-            if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
-                trsResult = TRS_ILLEGAL_FILENAME;
-                break;
-            }
+			if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
+				trsResult = TRS_ILLEGAL_FILENAME;
+				break;
+			}
 
-            if (dstHasWildcard && !dstIsDir) {
-                char mappedName[TRS80_PATH_MAX];
-                if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
-                    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
-                    trsResult = TRS_ILLEGAL_FILENAME;
-                    break;
-                }
-            } else {
-                const char *targetBaseDir = dstIsDir ? dstProbe : dstDir;
-                if (!JoinPath(fullDst, sizeof(fullDst), targetBaseDir, fno->fname)) {
-                    trsResult = TRS_ILLEGAL_FILENAME;
-                    break;
-                }
-            }
+			if (dstHasWildcard && !dstIsDir) {
+				char mappedName[TRS80_PATH_MAX];
+				if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
+				    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
+					trsResult = TRS_ILLEGAL_FILENAME;
+					break;
+				}
+			} else {
+				const char *targetBaseDir = dstIsDir ? dstProbe : dstDir;
+				if (!JoinPath(fullDst, sizeof(fullDst), targetBaseDir, fno->fname)) {
+					trsResult = TRS_ILLEGAL_FILENAME;
+					break;
+				}
+			}
 
-            BYTE copyErr = CopySingleFile(fullSrc, fullDst);
-            if (copyErr != TRS_OK) {
-                trsResult = copyErr;
-                break;
-            }
+			BYTE copyErr = CopySingleFile(fullSrc, fullDst);
+			if (copyErr != TRS_OK) {
+				trsResult = copyErr;
+				break;
+			}
 
-            if (copiedCount) (*copiedCount)++;
-        }
-    }
+			if (copiedCount) (*copiedCount)++;
+		}
+	}
 
-    f_closedir(dir);
-    free(dir);
-    free(fno);
+	f_closedir(dir);
+	free(dir);
+	free(fno);
 
-    return trsResult;
+	return trsResult;
 }
 
 // ========================================================
@@ -1289,139 +1356,178 @@ BYTE DeleteFileSpec(const char *delSpec, uint32_t *deletedCount) {
 }
 
 // ========================================================
-// RENAME FILE(s)
+// RENAME MOVE FILE(s)
 // ========================================================
 
-BYTE RenameFileSpec(const char *srcSpec, const char *dstSpec, uint32_t *renamedCount) {
-    if (renamedCount) *renamedCount = 0;
-    if (!srcSpec || !dstSpec || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
-        return TRS_ILLEGAL_FILENAME;
-    }
+BYTE RunRenameOrMoveSpec(
+	const char *srcSpec,
+	const char *dstSpec,
+	const RenameMovePolicy *policy,
+	uint32_t *renamedCount)
+{
+	if (renamedCount) *renamedCount = 0;
+	if (!srcSpec || !dstSpec || !policy || srcSpec[0] == '\0' || dstSpec[0] == '\0') {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-    char srcDir[TRS80_PATH_MAX];
-    char srcPat[TRS80_PATH_MAX];
-    SplitSrcSpec(srcSpec, srcDir, sizeof(srcDir), srcPat, sizeof(srcPat));
+	ResolvedEndpoint src;
+	ResolvedEndpoint dst;
 
-    if (srcPat[0] == '\0') {
-        return TRS_ILLEGAL_FILENAME;
-    }
+	BYTE srcErr = resolve_spec_endpoint(srcSpec, &src);
+	if (srcErr != TRS_OK) return srcErr;
 
-    bool srcWild = HasWildcard(srcPat);
-    bool dstWild = HasWildcard(dstSpec);
+	BYTE dstErr = resolve_spec_endpoint(dstSpec, &dst);
+	if (dstErr != TRS_OK) return dstErr;
 
-    // Non-wildcard rename / move (supports files, directories, and cross-dir moves)
-    if (!srcWild && !dstWild) {
-        char fullSrc[196];
-        char fullDst[196];
+	/* REN policy: no cross-directory or cross-drive moves */
+	if (!policy->allowMoves) {
+		if (dst.hasExplicitPathOrSep || dst.trailingSep) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+		if (src.hasDrive && dst.hasDrive && src.driveId != dst.driveId) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+		if (!src.hasDrive && dst.hasDrive) {
+			return TRS_ILLEGAL_FILENAME;
+		}
+	}
 
-        if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, srcPat)) {
-            return TRS_ILLEGAL_FILENAME;
-        }
+	/* Inherit source directory on unqualified destination when configured (REN) */
+	if (policy->inheritSrcDir && src.hasDrive && !dst.hasDrive && !dst.hasExplicitPathOrSep) {
+		snprintf(dst.dir, sizeof(dst.dir), "%s", src.dir);
+	}
 
-        FILINFO dstInfo;
-        FRESULT dstStat = f_stat(dstSpec, &dstInfo);
-        if (EndsWithSep(dstSpec) || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR))) {
-            if (!JoinPath(fullDst, sizeof(fullDst), dstSpec, srcPat)) {
-                return TRS_ILLEGAL_FILENAME;
-            }
-        } else {
-            snprintf(fullDst, sizeof(fullDst), "%s", dstSpec);
-        }
+	bool srcWild = HasWildcard(src.pat);
+	bool dstWild = HasWildcard(dst.pat);
 
-        if (strcmp(fullSrc, fullDst) == 0) {
-            return TRS_OK;
-        }
+	if (!srcWild && !dstWild) {
+		char fullSrc[TRS80_PATH_MAX];
+		char fullDst[TRS80_PATH_MAX];
 
-        BYTE err = FileRename(fullSrc, fullDst);
-        if (err == TRS_OK && renamedCount) (*renamedCount)++;
-        return err;
-    }
+		if (!JoinPath(fullSrc, sizeof(fullSrc), src.dir, src.pat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-    // Wildcard rename requires a wildcard pattern in source
-    if (!srcWild) {
-        return TRS_ILLEGAL_FILENAME;
-    }
+		FILINFO srcInfo;
+		bool srcIsDir = (f_stat(fullSrc, &srcInfo) == FR_OK && (srcInfo.fattrib & AM_DIR));
 
-    char dstDir[TRS80_PATH_MAX];
-    char dstPat[TRS80_PATH_MAX];
-    if (dstWild) {
-        SplitSrcSpec(dstSpec, dstDir, sizeof(dstDir), dstPat, sizeof(dstPat));
-    } else {
-        snprintf(dstDir, sizeof(dstDir), "%s", dstSpec);
-        snprintf(dstPat, sizeof(dstPat), "%s", "*");
-    }
+		/* Reject :N on directory targets */
+		if (src.hasDrive && srcIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-    bool allowDirs = (strchr(srcPat, '.') == NULL);
+		char dstProbe[TRS80_PATH_MAX];
+		if (strcmp(dst.pat, "*") == 0 && !dst.trailingSep) {
+			snprintf(dstProbe, sizeof(dstProbe), "%s", dst.dir);
+		} else if (!JoinPath(dstProbe, sizeof(dstProbe), dst.dir, dst.pat)) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-    DIR *dir = (DIR *)malloc(sizeof(DIR));
-    FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
-    if (!dir || !fno) {
-        free(dir);
-        free(fno);
-        return TRS_DEVICE_NOT_AVAIL;
-    }
+		FILINFO dstInfo;
+		FRESULT dstStat = f_stat(dstProbe, &dstInfo);
+		bool dstIsDir = dst.trailingSep || (dstStat == FR_OK && (dstInfo.fattrib & AM_DIR));
 
-    FRESULT fr = f_opendir(dir, srcDir);
-    if (fr != FR_OK) {
-        free(dir);
-        free(fno);
-        return trans(fr);
-    }
+		if (dst.hasDrive && dstIsDir) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-    BYTE trsResult = TRS_OK;
+		if (srcIsDir && !policy->allowDirs) {
+			return TRS_ILLEGAL_FILENAME;
+		}
 
-    while (1) {
-        fr = f_readdir(dir, fno);
-        if (fr != FR_OK) {
-            trsResult = trans(fr);
-            break;
-        }
-        if (fno->fname[0] == '\0') {
-            trsResult = TRS_OK;
-            break;
-        }
-        if (ShouldSkipEntry(fno, allowDirs)) {
-            continue;
-        }
+		if (dstIsDir) {
+			if (!policy->allowMoves) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+			if (!JoinPath(fullDst, sizeof(fullDst), dstProbe, src.pat)) {
+				return TRS_ILLEGAL_FILENAME;
+			}
+		} else {
+			snprintf(fullDst, sizeof(fullDst), "%s", dstProbe);
+		}
 
-        if (MatchWildcard(srcPat, fno->fname)) {
-            char fullSrc[TRS80_PATH_MAX];
-            char fullDst[TRS80_PATH_MAX];
-            char mappedName[TRS80_PATH_MAX];
+		if (strcmp(fullSrc, fullDst) == 0) {
+			return TRS_OK;
+		}
 
-            if (!JoinPath(fullSrc, sizeof(fullSrc), srcDir, fno->fname)) {
-                trsResult = TRS_ILLEGAL_FILENAME;
-                break;
-            }
+		BYTE err = FileRename(fullSrc, fullDst);
+		if (err == TRS_OK && renamedCount) (*renamedCount)++;
+		return err;
+	}
 
-            if (dstWild) {
-                if (!ApplyDestWildcard(dstPat, fno->fname, mappedName, sizeof(mappedName)) ||
-                    !JoinPath(fullDst, sizeof(fullDst), dstDir, mappedName)) {
-                    trsResult = TRS_ILLEGAL_FILENAME;
-                    break;
-                }
-            } else {
-                if (!JoinPath(fullDst, sizeof(fullDst), dstDir, fno->fname)) {
-                    trsResult = TRS_ILLEGAL_FILENAME;
-                    break;
-                }
-            }
+	if (!srcWild) {
+		return TRS_ILLEGAL_FILENAME;
+	}
 
-            BYTE renErr = FileRename(fullSrc, fullDst);
-            if (renErr != TRS_OK) {
-                trsResult = renErr;
-                break;
-            }
+	DIR *dir = (DIR *)malloc(sizeof(DIR));
+	FILINFO *fno = (FILINFO *)malloc(sizeof(FILINFO));
+	if (!dir || !fno) {
+		free(dir);
+		free(fno);
+		return TRS_DEVICE_NOT_AVAIL;
+	}
 
-            if (renamedCount) (*renamedCount)++;
-        }
-    }
+	FRESULT fr = f_opendir(dir, src.dir);
+	if (fr != FR_OK) {
+		free(dir);
+		free(fno);
+		return trans(fr);
+	}
 
-    f_closedir(dir);
-    free(dir);
-    free(fno);
+	BYTE trsResult = TRS_OK;
 
-    return trsResult;
+	while (1) {
+		fr = f_readdir(dir, fno);
+		if (fr != FR_OK) {
+			trsResult = trans(fr);
+			break;
+		}
+		if (fno->fname[0] == '\0') {
+			trsResult = TRS_OK;
+			break;
+		}
+		if (ShouldSkipEntry(fno, false)) {
+			continue;
+		}
+
+		if (MatchWildcard(src.pat, fno->fname)) {
+			char fullSrc[TRS80_PATH_MAX];
+			char fullDst[TRS80_PATH_MAX];
+			char mappedName[TRS80_PATH_MAX];
+
+			if (!JoinPath(fullSrc, sizeof(fullSrc), src.dir, fno->fname)) {
+				trsResult = TRS_ILLEGAL_FILENAME;
+				break;
+			}
+
+			if (dstWild) {
+				if (!ApplyDestWildcard(dst.pat, fno->fname, mappedName, sizeof(mappedName)) ||
+				    !JoinPath(fullDst, sizeof(fullDst), dst.dir, mappedName)) {
+					trsResult = TRS_ILLEGAL_FILENAME;
+					break;
+				}
+			} else {
+				if (!JoinPath(fullDst, sizeof(fullDst), dst.dir, fno->fname)) {
+					trsResult = TRS_ILLEGAL_FILENAME;
+					break;
+				}
+			}
+
+			BYTE renErr = FileRename(fullSrc, fullDst);
+			if (renErr != TRS_OK) {
+				trsResult = renErr;
+				break;
+			}
+
+			if (renamedCount) (*renamedCount)++;
+		}
+	}
+
+	f_closedir(dir);
+	free(dir);
+	free(fno);
+
+	return trsResult;
 }
 
 // =================================================
